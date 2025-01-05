@@ -1,10 +1,10 @@
-# TestBrowser
+# Tinker
 
-A modern browser built from the ground up with testing, verification, and automation at its core. TestBrowser leverages MQTT-based event handling and provides comprehensive API control for testing frameworks.
+A meticulously engineered browser built for tinkerers and test enthusiasts. Tinker treats web testing as a craft, combining precision mechanics with MQTT-based event handling to create the ultimate testing workbench.
 
 ## Vision
 
-TestBrowser aims to bridge the gap between web browsing and test automation by creating a browser that treats testing as a first-class citizen. By building testing capabilities directly into the browser core, we enable more reliable, observable, and controllable web testing.
+Born in a workshop of web innovation, Tinker aims to reimagine browser testing through ingenious engineering. By building testing capabilities directly into the browser's machinery, we provide craftspeople with the tools they need for reliable, observable, and controllable web testing.
 
 ## Key Features
 
