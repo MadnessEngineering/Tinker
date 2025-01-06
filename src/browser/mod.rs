@@ -4,8 +4,9 @@ use tao::{
     event::{Event, StartCause, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
+    dpi::LogicalSize,
 };
-use wry::WebViewBuilder;
+use wry::{WebView, WebViewBuilder};
 use tracing::debug;
 use crate::event::{EventSystem, BrowserEvent};
 use std::sync::{Arc, Mutex};
@@ -24,6 +25,7 @@ pub struct BrowserEngine {
     tabs: TabManager,
     event_viewer: EventViewer,
     tab_bar: Option<TabBar>,
+    content_view: Option<WebView>,
 }
 
 impl BrowserEngine {
@@ -34,6 +36,7 @@ impl BrowserEngine {
             tabs: TabManager::new(),
             event_viewer: EventViewer::new(),
             tab_bar: None,
+            content_view: None,
         }
     }
 
@@ -54,7 +57,7 @@ impl BrowserEngine {
         let event_loop = EventLoop::new();
         let mut window_builder = WindowBuilder::new()
             .with_title("Tinker Workshop")
-            .with_inner_size(tao::dpi::LogicalSize::new(1024.0, 768.0));
+            .with_inner_size(LogicalSize::new(1024.0, 768.0));
 
         if self.headless {
             window_builder = window_builder.with_visible(false);
@@ -75,13 +78,14 @@ impl BrowserEngine {
                     tab_bar.set_active_tab(active_tab.id);
                 }
             }
-        }
 
-        // Create the main browser window
-        if let Some(active_tab) = self.tabs.get_active_tab() {
-            let _webview = WebViewBuilder::new(&window)
-                .with_url(&active_tab.url)?
-                .build()?;
+            // Create the content view
+            if let Some(active_tab) = self.tabs.get_active_tab() {
+                let content_view = WebViewBuilder::new(&window)
+                    .with_url(&active_tab.url)?
+                    .build()?;
+                self.content_view = Some(content_view);
+            }
         }
 
         debug!("Running event loop...");
@@ -139,6 +143,11 @@ impl BrowserEngine {
             if let Some(tab_bar) = &self.tab_bar {
                 tab_bar.update_tab(tab.id, &tab.title, url);
             }
+
+            // Update content view
+            if let Some(content_view) = &self.content_view {
+                content_view.load_url(url);
+            }
             
             if let Some(events) = &self.events {
                 if let Ok(mut events) = events.lock() {
@@ -167,6 +176,11 @@ impl BrowserEngine {
                 tab_bar.set_active_tab(id);
             }
         }
+
+        // Update content view
+        if let Some(content_view) = &self.content_view {
+            content_view.load_url(url);
+        }
         
         if let Some(events) = &self.events {
             if let Ok(mut events) = events.lock() {
@@ -187,6 +201,10 @@ impl BrowserEngine {
                 tab_bar.remove_tab(id);
                 if let Some(active_tab) = self.tabs.get_active_tab() {
                     tab_bar.set_active_tab(active_tab.id);
+                    // Update content view
+                    if let Some(content_view) = &self.content_view {
+                        content_view.load_url(&active_tab.url);
+                    }
                 }
             }
             
@@ -208,6 +226,13 @@ impl BrowserEngine {
             // Update tab UI
             if let Some(tab_bar) = &self.tab_bar {
                 tab_bar.set_active_tab(id);
+            }
+
+            // Update content view
+            if let Some(content_view) = &self.content_view {
+                if let Some(tab) = self.tabs.get_active_tab() {
+                    content_view.load_url(&tab.url);
+                }
             }
             
             if let Some(events) = &self.events {

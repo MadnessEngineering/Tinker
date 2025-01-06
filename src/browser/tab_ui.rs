@@ -14,8 +14,8 @@ impl TabBar {
         // Create a WebView for the tab bar with custom HTML/CSS
         let container = WebViewBuilder::new(window)
             .with_html(include_str!("../templates/tab_bar.html"))?
-            .with_initialization_script(include_str!("../templates/tab_bar.js"))?
-            .with_ipc_handler(|window, msg| {
+            .with_initialization_script(include_str!("../templates/tab_bar.js"))
+            .with_ipc_handler(move |msg| {
                 // Handle IPC messages from the tab bar UI
                 if let Ok(event) = serde_json::from_str::<BrowserEvent>(&msg) {
                     match event {
