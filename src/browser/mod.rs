@@ -12,15 +12,18 @@ use std::sync::{Arc, Mutex};
 
 mod tabs;
 mod event_viewer;
+mod tab_ui;
 
 use tabs::TabManager;
 use event_viewer::EventViewer;
+use tab_ui::TabBar;
 
 pub struct BrowserEngine {
     headless: bool,
     events: Option<Arc<Mutex<EventSystem>>>,
     tabs: TabManager,
     event_viewer: EventViewer,
+    tab_bar: Option<TabBar>,
 }
 
 impl BrowserEngine {
@@ -30,6 +33,7 @@ impl BrowserEngine {
             events: None,
             tabs: TabManager::new(),
             event_viewer: EventViewer::new(),
+            tab_bar: None,
         }
     }
 
@@ -57,6 +61,21 @@ impl BrowserEngine {
         }
 
         let window = window_builder.build(&event_loop)?;
+
+        // Create the tab bar if not in headless mode
+        if !self.headless {
+            self.tab_bar = Some(TabBar::new(&window)?);
+            
+            // Add existing tabs to the UI
+            if let Some(tab_bar) = &self.tab_bar {
+                for tab in self.tabs.get_all_tabs() {
+                    tab_bar.add_tab(tab.id, &tab.title, &tab.url);
+                }
+                if let Some(active_tab) = self.tabs.get_active_tab() {
+                    tab_bar.set_active_tab(active_tab.id);
+                }
+            }
+        }
 
         // Create the main browser window
         if let Some(active_tab) = self.tabs.get_active_tab() {
@@ -116,6 +135,11 @@ impl BrowserEngine {
         if let Some(tab) = self.tabs.get_active_tab_mut() {
             tab.url = url.to_string();
             
+            // Update tab UI
+            if let Some(tab_bar) = &self.tab_bar {
+                tab_bar.update_tab(tab.id, &tab.title, url);
+            }
+            
             if let Some(events) = &self.events {
                 if let Ok(mut events) = events.lock() {
                     events.publish(BrowserEvent::Navigation {
@@ -136,6 +160,14 @@ impl BrowserEngine {
     pub fn create_tab(&mut self, url: &str) -> Result<usize, Box<dyn std::error::Error>> {
         let id = self.tabs.create_tab(url.to_string());
         
+        // Update tab UI
+        if let Some(tab_bar) = &self.tab_bar {
+            if let Some(tab) = self.tabs.get_active_tab() {
+                tab_bar.add_tab(id, &tab.title, url);
+                tab_bar.set_active_tab(id);
+            }
+        }
+        
         if let Some(events) = &self.events {
             if let Ok(mut events) = events.lock() {
                 events.publish(BrowserEvent::TabCreated { id })?;
@@ -150,6 +182,14 @@ impl BrowserEngine {
 
     pub fn close_tab(&mut self, id: usize) -> Result<(), Box<dyn std::error::Error>> {
         if self.tabs.close_tab(id) {
+            // Update tab UI
+            if let Some(tab_bar) = &self.tab_bar {
+                tab_bar.remove_tab(id);
+                if let Some(active_tab) = self.tabs.get_active_tab() {
+                    tab_bar.set_active_tab(active_tab.id);
+                }
+            }
+            
             if let Some(events) = &self.events {
                 if let Ok(mut events) = events.lock() {
                     events.publish(BrowserEvent::TabClosed { id })?;
@@ -165,6 +205,11 @@ impl BrowserEngine {
 
     pub fn switch_to_tab(&mut self, id: usize) -> Result<(), Box<dyn std::error::Error>> {
         if self.tabs.switch_to_tab(id) {
+            // Update tab UI
+            if let Some(tab_bar) = &self.tab_bar {
+                tab_bar.set_active_tab(id);
+            }
+            
             if let Some(events) = &self.events {
                 if let Ok(mut events) = events.lock() {
                     events.publish(BrowserEvent::TabSwitched { id })?;
