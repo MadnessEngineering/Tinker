@@ -2,34 +2,21 @@
 name = "testbrowser"
 version = "0.1.0"
 edition = "2021"
-description = "A browser built for testing and verification with MQTT-based event handling"
-authors = ["Your Name <your.email@example.com>"]
-license = "MIT"
 
 [dependencies]
-# Web rendering
-wry = "0.35"  # WebView component
-tokio = { version = "1.36", features = ["full"] }  # Async runtime
-
-# MQTT
-rumqttc = "0.24"  # MQTT client
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-# API Server
-axum = "0.7"  # Web framework
-tower = "0.4"  # HTTP middleware
-tower-http = { version = "0.5", features = ["cors"] }
-
-# Logging and debugging
-tracing = "0.1"
-tracing-subscriber = "0.3"
-
-# CLI
-clap = { version = "4.5", features = ["derive"] }
+wry = "0.35"
+tao = { version = "0.24", features = ["rwh_05"] }
+raw-window-handle = "0.5.2"
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+axum = "0.6.20"
+rumqttc = "0.22.0"
+tokio = { version = "1.35.1", features = ["full"] }
+serde = { version = "1.0.195", features = ["derive"] }
+serde_json = "1.0.111"
+clap = { version = "4.4.12", features = ["derive"] }
+anyhow = "1.0.79"
 
 [dev-dependencies]
-tokio-test = "0.4"
-pretty_assertions = "1.4"
 assert_cmd = "2.0"
 predicates = "3.0"

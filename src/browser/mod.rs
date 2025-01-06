@@ -4,8 +4,8 @@ use tao::{
     event::{Event, StartCause, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
+    platform::macos::WindowExtMacOS,
 };
-use raw_window_handle::HasRawWindowHandle;
 use wry::WebViewBuilder;
 use tracing::debug;
 
@@ -22,19 +22,19 @@ impl BrowserEngine {
 
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         debug!("Starting browser engine...");
-        
+
         let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
             .with_title("Tinker Workshop")
             .with_inner_size(tao::dpi::LogicalSize::new(1024.0, 768.0))
             .build(&event_loop)?;
 
-        let _webview = WebViewBuilder::new(window.raw_window_handle())
+        let _webview = WebViewBuilder::new(&window)
             .with_url("about:blank")?
             .build()?;
 
         debug!("Running event loop...");
-        
+
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Wait;
 
@@ -68,4 +68,4 @@ mod tests {
         browser.navigate("https://www.example.com").unwrap();
         assert_eq!(browser.url, "https://www.example.com");
     }
-} 
+}
