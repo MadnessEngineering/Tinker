@@ -245,7 +245,7 @@ impl BrowserEngine {
         }
     }
 
-    fn initialize_tab_webview(&self, tab_id: usize, headless: bool) -> WryResult<()> {
+    fn initialize_tab_webview(&self, tab_id: usize, _headless: bool) -> WryResult<()> {
         if let Some(tab) = self.tabs.get(&tab_id) {
             let mut tab = tab.lock().unwrap();
             if tab.webview.is_none() {
