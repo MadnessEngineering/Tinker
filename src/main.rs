@@ -25,6 +25,14 @@ struct Cli {
     /// Enable debug logging
     #[arg(long)]
     debug: bool,
+
+    /// Initial URL to navigate to
+    #[arg(long)]
+    url: Option<String>,
+
+    /// Number of tabs to open at startup
+    #[arg(long, default_value = "1")]
+    tabs: usize,
 }
 
 #[tokio::main]
@@ -41,8 +49,18 @@ async fn main() -> WryResult<()> {
     info!("Headless Mode: {}", cli.headless);
 
     // Forge our browser engine
-    let browser = BrowserEngine::forge(cli.headless)?;
-    
+    let mut browser = BrowserEngine::forge(cli.headless)?;
+
+    // Open initial tabs if requested
+    for _ in 1..cli.tabs {
+        browser.new_tab(None)?;
+    }
+
+    // Navigate to initial URL if provided
+    if let Some(url) = cli.url {
+        browser.navigate(&url)?;
+    }
+
     // Keep the main thread alive while the WebView is running
     browser.webview.run();
 
