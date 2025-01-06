@@ -1,6 +1,7 @@
 use tracing::{debug, Level};
 use tracing_subscriber::FmtSubscriber;
 use clap::Parser;
+use tokio;
 
 mod browser;
 mod api;
@@ -28,9 +29,14 @@ struct Args {
     /// Number of tabs to open on startup
     #[arg(long)]
     tabs: Option<usize>,
+
+    /// MQTT broker URL for events
+    #[arg(long, default_value = "localhost")]
+    mqtt_broker: String,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::DEBUG)
@@ -43,8 +49,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     debug!("Starting Tinker Workshop");
 
+    // Start API server in a separate task
+    tokio::spawn(async {
+        if let Err(e) = api::start_api_server().await {
+            debug!("API server error: {}", e);
+        }
+    });
+
     let mut browser = BrowserEngine::new();
     browser.set_headless(args.headless);
+    
+    // Initialize event system
+    if let Err(e) = browser.init_events(&args.mqtt_broker) {
+        debug!("Failed to initialize event system: {}", e);
+    }
     
     if let Some(url) = args.url {
         browser.navigate(&url)?;

@@ -7,10 +7,13 @@ use tao::{
 };
 use wry::WebViewBuilder;
 use tracing::debug;
+use crate::event::{EventSystem, BrowserEvent};
+use std::sync::{Arc, Mutex};
 
 pub struct BrowserEngine {
     url: String,
     headless: bool,
+    events: Option<Arc<Mutex<EventSystem>>>,
 }
 
 impl BrowserEngine {
@@ -18,11 +21,19 @@ impl BrowserEngine {
         BrowserEngine {
             url: String::from("about:blank"),
             headless: false,
+            events: None,
         }
     }
 
     pub fn set_headless(&mut self, headless: bool) {
         self.headless = headless;
+    }
+
+    pub fn init_events(&mut self, broker_url: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let mut events = EventSystem::new(broker_url, "tinker-browser");
+        events.connect()?;
+        self.events = Some(Arc::new(Mutex::new(events)));
+        Ok(())
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -45,7 +56,17 @@ impl BrowserEngine {
 
         debug!("Running event loop...");
 
+        // Emit initial events
+        if let Some(events) = &self.events {
+            if let Ok(mut events) = events.lock() {
+                events.publish(BrowserEvent::PageLoaded {
+                    url: self.url.clone(),
+                })?;
+            }
+        }
+
         let headless = self.headless;
+        let events = self.events.clone();  // Clone the Arc for the closure
         event_loop.run(move |event, _, control_flow| {
             *control_flow = if headless {
                 ControlFlow::Exit
@@ -54,7 +75,16 @@ impl BrowserEngine {
             };
 
             match event {
-                Event::NewEvents(StartCause::Init) => debug!("Browser window initialized"),
+                Event::NewEvents(StartCause::Init) => {
+                    debug!("Browser window initialized");
+                    if let Some(events) = &events {
+                        if let Ok(mut events) = events.lock() {
+                            let _ = events.publish(BrowserEvent::TitleChanged {
+                                title: "Tinker Workshop".to_string(),
+                            });
+                        }
+                    }
+                }
                 Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
                     ..
@@ -70,6 +100,15 @@ impl BrowserEngine {
     pub fn navigate(&mut self, url: &str) -> Result<(), Box<dyn std::error::Error>> {
         debug!("Navigating to: {}", url);
         self.url = url.to_string();
+        
+        if let Some(events) = &self.events {
+            if let Ok(mut events) = events.lock() {
+                events.publish(BrowserEvent::Navigation {
+                    url: url.to_string(),
+                })?;
+            }
+        }
+        
         Ok(())
     }
 }
