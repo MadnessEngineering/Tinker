@@ -2,6 +2,7 @@ use clap::Parser;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 use crate::browser::BrowserEngine;
+use wry::Result as WryResult;
 
 mod browser;
 mod event;

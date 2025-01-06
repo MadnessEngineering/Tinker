@@ -3,6 +3,8 @@
 use wry::{WebView, WebViewBuilder, Result as WryResult};
 use tracing::{info, error, debug};
 use std::collections::HashMap;
+use std::thread;
+use std::time::Duration;
 
 pub struct BrowserEngine {
     webview: WebView,
@@ -139,45 +141,73 @@ impl BrowserEngine {
             Ok(())
         }
     }
+
+    // Add this method for proper cleanup
+    pub fn cleanup(&mut self) {
+        debug!("Cleaning up browser engine resources");
+        for (_, tab) in self.tabs.drain() {
+            drop(tab.webview);
+        }
+        drop(&self.webview);
+    }
+}
+
+impl Drop for BrowserEngine {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    // Helper function to run tests with proper WebView initialization
+    fn with_browser<F>(test: F)
+    where
+        F: FnOnce(&mut BrowserEngine) + Send + 'static,
+    {
+        thread::spawn(move || {
+            let mut browser = BrowserEngine::forge(true).unwrap();
+            test(&mut browser);
+        })
+        .join()
+        .unwrap();
+    }
+
     #[test]
     fn test_navigation_history() {
-        let mut browser = BrowserEngine::forge(true).unwrap();
-        
-        // Test navigation
-        browser.navigate("https://example.com").unwrap();
-        browser.navigate("https://test.com").unwrap();
-        assert_eq!(browser.history.len(), 3); // including about:blank
-        
-        // Test back
-        browser.back().unwrap();
-        assert_eq!(browser.current_index, 1);
-        
-        // Test forward
-        browser.forward().unwrap();
-        assert_eq!(browser.current_index, 2);
+        with_browser(|browser| {
+            // Test navigation
+            browser.navigate("https://example.com").unwrap();
+            browser.navigate("https://test.com").unwrap();
+            assert_eq!(browser.history.len(), 3); // including about:blank
+            
+            // Test back
+            browser.back().unwrap();
+            assert_eq!(browser.current_index, 1);
+            
+            // Test forward
+            browser.forward().unwrap();
+            assert_eq!(browser.current_index, 2);
+        });
     }
 
     #[test]
     fn test_tab_management() {
-        let mut browser = BrowserEngine::forge(true).unwrap();
-        
-        // Test new tab
-        let tab_id = browser.new_tab(None).unwrap();
-        assert_eq!(tab_id, 1);
-        assert_eq!(browser.tabs.len(), 2);
-        
-        // Test switching tabs
-        browser.switch_tab(tab_id).unwrap();
-        assert_eq!(browser.active_tab, tab_id);
-        
-        // Test closing tab
-        browser.close_tab(tab_id).unwrap();
-        assert_eq!(browser.tabs.len(), 1);
+        with_browser(|browser| {
+            // Test new tab
+            let tab_id = browser.new_tab(None).unwrap();
+            assert_eq!(tab_id, 1);
+            assert_eq!(browser.tabs.len(), 2);
+            
+            // Test switching tabs
+            browser.switch_tab(tab_id).unwrap();
+            assert_eq!(browser.active_tab, tab_id);
+            
+            // Test closing tab
+            browser.close_tab(tab_id).unwrap();
+            assert_eq!(browser.tabs.len(), 1);
+        });
     }
 } 
