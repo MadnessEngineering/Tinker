@@ -47,10 +47,10 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
 
 ### Phase 1: Foundation Works
 - [ ] Core Engine Assembly
-  - [ ] Forge Wry WebView Components
-  - [ ] Engineer Navigation Controls
-  - [ ] Construct Tab Management
-  - [ ] Design Window Framework
+  - [x] Forge Wry WebView Components
+  - [x] Engineer Navigation Controls
+  - [x] Construct Tab Management
+  - [x] Design Window Framework
   - [ ] Wire Keyboard Controls
 
 - [ ] Event Engineering Station
@@ -62,7 +62,7 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
   - [ ] Install Signal Filters
 
 - [ ] Control Panel Construction
-  - [ ] Forge API Control Points
+  - [x] Forge API Control Points
   - [ ] Install WebSocket Machinery
   - [ ] Build Security Mechanisms
   - [ ] Draft Technical Schematics
