@@ -10,18 +10,26 @@ use tracing::debug;
 use crate::event::{EventSystem, BrowserEvent};
 use std::sync::{Arc, Mutex};
 
+mod tabs;
+mod event_viewer;
+
+use tabs::TabManager;
+use event_viewer::EventViewer;
+
 pub struct BrowserEngine {
-    url: String,
     headless: bool,
     events: Option<Arc<Mutex<EventSystem>>>,
+    tabs: TabManager,
+    event_viewer: EventViewer,
 }
 
 impl BrowserEngine {
     pub fn new() -> Self {
         BrowserEngine {
-            url: String::from("about:blank"),
             headless: false,
             events: None,
+            tabs: TabManager::new(),
+            event_viewer: EventViewer::new(),
         }
     }
 
@@ -50,23 +58,28 @@ impl BrowserEngine {
 
         let window = window_builder.build(&event_loop)?;
 
-        let _webview = WebViewBuilder::new(&window)
-            .with_url(&self.url)?
-            .build()?;
+        // Create the main browser window
+        if let Some(active_tab) = self.tabs.get_active_tab() {
+            let _webview = WebViewBuilder::new(&window)
+                .with_url(&active_tab.url)?
+                .build()?;
+        }
 
         debug!("Running event loop...");
 
         // Emit initial events
         if let Some(events) = &self.events {
             if let Ok(mut events) = events.lock() {
-                events.publish(BrowserEvent::PageLoaded {
-                    url: self.url.clone(),
-                })?;
+                if let Some(active_tab) = self.tabs.get_active_tab() {
+                    events.publish(BrowserEvent::PageLoaded {
+                        url: active_tab.url.clone(),
+                    })?;
+                }
             }
         }
 
         let headless = self.headless;
-        let events = self.events.clone();  // Clone the Arc for the closure
+        let events = self.events.clone();
         event_loop.run(move |event, _, control_flow| {
             *control_flow = if headless {
                 ControlFlow::Exit
@@ -99,14 +112,67 @@ impl BrowserEngine {
 
     pub fn navigate(&mut self, url: &str) -> Result<(), Box<dyn std::error::Error>> {
         debug!("Navigating to: {}", url);
-        self.url = url.to_string();
+        
+        if let Some(tab) = self.tabs.get_active_tab_mut() {
+            tab.url = url.to_string();
+            
+            if let Some(events) = &self.events {
+                if let Ok(mut events) = events.lock() {
+                    events.publish(BrowserEvent::Navigation {
+                        url: url.to_string(),
+                    })?;
+                }
+            }
+
+            // Add to event viewer
+            self.event_viewer.add_event(BrowserEvent::Navigation {
+                url: url.to_string(),
+            });
+        }
+        
+        Ok(())
+    }
+
+    pub fn create_tab(&mut self, url: &str) -> Result<usize, Box<dyn std::error::Error>> {
+        let id = self.tabs.create_tab(url.to_string());
         
         if let Some(events) = &self.events {
             if let Ok(mut events) = events.lock() {
-                events.publish(BrowserEvent::Navigation {
-                    url: url.to_string(),
-                })?;
+                events.publish(BrowserEvent::TabCreated { id })?;
             }
+        }
+
+        // Add to event viewer
+        self.event_viewer.add_event(BrowserEvent::TabCreated { id });
+        
+        Ok(id)
+    }
+
+    pub fn close_tab(&mut self, id: usize) -> Result<(), Box<dyn std::error::Error>> {
+        if self.tabs.close_tab(id) {
+            if let Some(events) = &self.events {
+                if let Ok(mut events) = events.lock() {
+                    events.publish(BrowserEvent::TabClosed { id })?;
+                }
+            }
+
+            // Add to event viewer
+            self.event_viewer.add_event(BrowserEvent::TabClosed { id });
+        }
+        
+        Ok(())
+    }
+
+    pub fn switch_to_tab(&mut self, id: usize) -> Result<(), Box<dyn std::error::Error>> {
+        if self.tabs.switch_to_tab(id) {
+            if let Some(events) = &self.events {
+                if let Ok(mut events) = events.lock() {
+                    events.publish(BrowserEvent::TabSwitched { id })?;
+                }
+            }
+
+            // Add to event viewer
+            self.event_viewer.add_event(BrowserEvent::TabSwitched { id });
         }
         
         Ok(())
@@ -121,6 +187,8 @@ mod tests {
     fn test_browser_navigation() {
         let mut browser = BrowserEngine::new();
         browser.navigate("https://www.example.com").unwrap();
-        assert_eq!(browser.url, "https://www.example.com");
+        if let Some(tab) = browser.tabs.get_active_tab() {
+            assert_eq!(tab.url, "https://www.example.com");
+        }
     }
 }
