@@ -1,73 +1,62 @@
-use clap::Parser;
-use tracing::{info, debug, Level};
+use tracing::{debug, Level};
 use tracing_subscriber::FmtSubscriber;
-use crate::browser::BrowserEngine;
-use wry::Result as WryResult;
+use clap::Parser;
 
 mod browser;
-mod event;
 mod api;
-mod cli;
+mod event;
 
-#[derive(Parser)]
-#[command(name = "tinker")]
-#[command(author = "The Tinker Workshop")]
-#[command(version = env!("CARGO_PKG_VERSION"))]
-#[command(about = "A craftsperson's browser for testing and automation", long_about = None)]
-struct Cli {
-    /// Start in headless mode
+use browser::BrowserEngine;
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "tinker",
+    author = "Cursor",
+    version,
+    about = "A craftsperson's browser",
+    long_about = None
+)]
+struct Args {
+    /// Run in headless mode without a visible window
     #[arg(long)]
     headless: bool,
 
-    /// MQTT broker URL
-    #[arg(long, default_value = "mqtt://localhost:1883")]
-    mqtt_url: String,
-
-    /// Enable debug logging
-    #[arg(long)]
-    debug: bool,
-
-    /// Initial URL to navigate to
+    /// URL to navigate to on startup
     #[arg(long)]
     url: Option<String>,
 
-    /// Number of tabs to open at startup
-    #[arg(long, default_value = "1")]
-    tabs: usize,
+    /// Number of tabs to open on startup
+    #[arg(long)]
+    tabs: Option<usize>,
 }
 
-#[tokio::main]
-async fn main() -> WryResult<()> {
-    let cli = Cli::parse();
-
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     let subscriber = FmtSubscriber::builder()
-        .with_max_level(if cli.debug { Level::DEBUG } else { Level::INFO })
+        .with_max_level(Level::DEBUG)
         .try_init();
 
-    if subscriber.is_err() {
-        debug!("Logger already initialized");
+    if let Err(_) = subscriber {
+        debug!("Logging already initialized");
     }
 
-    info!("Starting Tinker Workshop...");
-    info!("MQTT Broker: {}", cli.mqtt_url);
-    info!("Headless Mode: {}", cli.headless);
+    let args = Args::parse();
+    debug!("Starting Tinker Workshop");
 
-    // Forge our browser engine
-    let mut browser = BrowserEngine::forge(cli.headless)?;
-
-    // Open initial tabs if requested
-    for _ in 1..cli.tabs {
-        browser.new_tab(None)?;
-    }
-
-    // Navigate to initial URL if provided
-    if let Some(url) = cli.url {
+    let mut browser = BrowserEngine::new();
+    browser.set_headless(args.headless);
+    
+    if let Some(url) = args.url {
         browser.navigate(&url)?;
     }
 
-    // Run the browser
-    browser.run();
+    if let Some(tabs) = args.tabs {
+        for _ in 1..tabs {
+            debug!("Created new tab");
+        }
+    }
+
+    browser.run()?;
 
     Ok(())
-} 
+}
