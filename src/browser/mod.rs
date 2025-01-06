@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{channel, Sender, Receiver};
 use wry::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
+use crate::event::{EventSystem, BrowserEvent};
 
 mod keyboard;
 use keyboard::{KeyCommand, handle_keyboard_input, KeyCode, ModifiersState};
@@ -37,6 +38,7 @@ pub struct BrowserEngine {
     next_tab_id: usize,
     keyboard_tx: Option<Sender<(KeyCode, ModifiersState)>>,
     keyboard_rx: Option<Receiver<(KeyCode, ModifiersState)>>,
+    event_system: Option<EventSystem>,
 }
 
 struct Tab {
@@ -70,6 +72,7 @@ impl BrowserEngine {
             next_tab_id: 1,
             keyboard_tx: Some(tx),
             keyboard_rx: Some(rx),
+            event_system: None,
         };
 
         if !headless {
@@ -109,6 +112,14 @@ impl BrowserEngine {
             let tab = tab.lock().unwrap();
             if let Some(webview) = &tab.webview {
                 webview.load_url(url);
+                
+                // Emit navigation event
+                if let Some(event_system) = &self.event_system {
+                    let _ = event_system.publish(BrowserEvent::Navigation {
+                        url: url.to_string(),
+                    });
+                }
+                
                 return Ok(());
             }
         }
@@ -164,6 +175,14 @@ impl BrowserEngine {
         self.tabs.insert(tab_id, tab);
         self.initialize_tab_webview(tab_id, true)?;
         info!("Created new tab with ID: {}", tab_id);
+        
+        // Emit tab created event
+        if let Some(event_system) = &self.event_system {
+            let _ = event_system.publish(BrowserEvent::TabCreated {
+                id: tab_id,
+            });
+        }
+        
         Ok(tab_id)
     }
 
@@ -171,6 +190,13 @@ impl BrowserEngine {
         if self.tabs.len() > 1 {
             self.tabs.remove(&tab_id);
             info!("Closed tab: {}", tab_id);
+            
+            // Emit tab closed event
+            if let Some(event_system) = &self.event_system {
+                let _ = event_system.publish(BrowserEvent::TabClosed {
+                    id: tab_id,
+                });
+            }
             
             if self.active_tab == tab_id {
                 self.active_tab = *self.tabs.keys().max().unwrap_or(&0);
@@ -186,6 +212,14 @@ impl BrowserEngine {
         if self.tabs.contains_key(&tab_id) {
             self.active_tab = tab_id;
             info!("Switched to tab: {}", tab_id);
+            
+            // Emit tab switched event
+            if let Some(event_system) = &self.event_system {
+                let _ = event_system.publish(BrowserEvent::TabSwitched {
+                    id: tab_id,
+                });
+            }
+            
             Ok(())
         } else {
             error!("Tab {} does not exist", tab_id);
@@ -292,6 +326,19 @@ impl BrowserEngine {
                 }
             }
         }
+        Ok(())
+    }
+
+    pub fn connect_event_system(&mut self, broker_url: &str, client_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let mut event_system = EventSystem::new(broker_url, client_id);
+        event_system.connect()?;
+        
+        // Subscribe to relevant topics
+        event_system.subscribe("browser/navigation")?;
+        event_system.subscribe("browser/tabs/#")?;
+        event_system.subscribe("browser/page/#")?;
+        
+        self.event_system = Some(event_system);
         Ok(())
     }
 }
@@ -401,5 +448,22 @@ mod tests {
             KeyCode::KeyR,
             ModifiersState { alt: false, ctrl: true, shift: false, meta: false }
         ).is_ok());
+    }
+
+    #[test]
+    fn test_event_system_integration() {
+        setup();
+        let mut browser = BrowserEngine::forge(true).unwrap();
+        
+        // Test navigation without event system
+        assert!(browser.navigate("https://example.com").is_ok());
+        
+        // Test tab events without event system
+        let tab_id = browser.new_tab(None).unwrap();
+        assert!(browser.switch_tab(tab_id).is_ok());
+        assert!(browser.close_tab(tab_id).is_ok());
+        
+        // Note: We don't test actual MQTT connection in unit tests
+        // That would be more appropriate for integration tests
     }
 } 
