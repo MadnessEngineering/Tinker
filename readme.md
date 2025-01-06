@@ -51,7 +51,7 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
   - [x] Engineer Navigation Controls
   - [x] Construct Tab Management
   - [x] Design Window Framework
-  - [ ] Wire Keyboard Controls
+  - [x] Wire Keyboard Controls
 
 - [ ] Event Engineering Station
   - [ ] Construct MQTT Signal Tower
