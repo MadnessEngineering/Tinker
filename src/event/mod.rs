@@ -3,7 +3,7 @@
 use rumqttc::{Client, MqttOptions, QoS};
 use serde::{Deserialize, Serialize};
 use tracing::{info, error, debug};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum BrowserEvent {
@@ -19,6 +19,8 @@ pub enum BrowserEvent {
 pub struct EventSystem {
     client: Option<Client>,
     options: MqttOptions,
+    last_error_log: Option<Instant>,
+    error_count: usize,
 }
 
 impl EventSystem {
@@ -32,6 +34,8 @@ impl EventSystem {
         Self {
             client: None,
             options,
+            last_error_log: None,
+            error_count: 0,
         }
     }
 
@@ -42,10 +46,27 @@ impl EventSystem {
         // Spawn a thread to handle incoming messages
         std::thread::spawn(move || {
             debug!("Starting MQTT event loop");
+            let mut last_error_log = None;
+            let mut error_count = 0;
+            
             for notification in connection.iter() {
                 match notification {
                     Ok(event) => debug!("Received MQTT event: {:?}", event),
-                    Err(e) => error!("MQTT error: {:?}", e),
+                    Err(e) => {
+                        let now = Instant::now();
+                        if let Some(last) = last_error_log {
+                            if now.duration_since(last) > Duration::from_secs(5) {
+                                error!("MQTT error occurred {} times: {:?}", error_count + 1, e);
+                                last_error_log = Some(now);
+                                error_count = 0;
+                            } else {
+                                error_count += 1;
+                            }
+                        } else {
+                            error!("MQTT error: {:?}", e);
+                            last_error_log = Some(now);
+                        }
+                    }
                 }
             }
         });
@@ -71,7 +92,19 @@ impl EventSystem {
             client.publish(topic, QoS::AtLeastOnce, false, payload.as_bytes())?;
             Ok(())
         } else {
-            error!("Cannot publish event: MQTT client not connected");
+            let now = Instant::now();
+            if let Some(last) = self.last_error_log {
+                if now.duration_since(last) > Duration::from_secs(5) {
+                    error!("Cannot publish event: MQTT client not connected (occurred {} times)", self.error_count + 1);
+                    self.last_error_log = Some(now);
+                    self.error_count = 0;
+                } else {
+                    self.error_count += 1;
+                }
+            } else {
+                error!("Cannot publish event: MQTT client not connected");
+                self.last_error_log = Some(now);
+            }
             Err("MQTT client not connected".into())
         }
     }
@@ -82,7 +115,19 @@ impl EventSystem {
             client.subscribe(topic, QoS::AtLeastOnce)?;
             Ok(())
         } else {
-            error!("Cannot subscribe: MQTT client not connected");
+            let now = Instant::now();
+            if let Some(last) = self.last_error_log {
+                if now.duration_since(last) > Duration::from_secs(5) {
+                    error!("Cannot subscribe: MQTT client not connected (occurred {} times)", self.error_count + 1);
+                    self.last_error_log = Some(now);
+                    self.error_count = 0;
+                } else {
+                    self.error_count += 1;
+                }
+            } else {
+                error!("Cannot subscribe: MQTT client not connected");
+                self.last_error_log = Some(now);
+            }
             Err("MQTT client not connected".into())
         }
     }
