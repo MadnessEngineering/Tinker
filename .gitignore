@@ -8,6 +8,7 @@
 target/
 dist/
 build/
+Cargo.lock
 *.exe
 *.dll
 *.so
