@@ -4,10 +4,11 @@ use axum::{
     Router,
     routing::get,
     Json,
+    extract::State,
 };
 
 pub async fn start_api_server() {
-    let app = Router::new()
+    let app: Router = Router::new()
         .route("/health", get(health_check));
 
     // TODO: Add more routes and implement server

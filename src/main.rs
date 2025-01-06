@@ -1,5 +1,5 @@
 use clap::Parser;
-use tracing::{info, Level};
+use tracing::{info, debug, Level};
 use tracing_subscriber::FmtSubscriber;
 use crate::browser::BrowserEngine;
 use wry::Result as WryResult;
@@ -43,7 +43,11 @@ async fn main() -> WryResult<()> {
     // Initialize logging
     let subscriber = FmtSubscriber::builder()
         .with_max_level(if cli.debug { Level::DEBUG } else { Level::INFO })
-        .init();
+        .try_init();
+
+    if subscriber.is_err() {
+        debug!("Logger already initialized");
+    }
 
     info!("Starting Tinker Workshop...");
     info!("MQTT Broker: {}", cli.mqtt_url);
@@ -62,8 +66,8 @@ async fn main() -> WryResult<()> {
         browser.navigate(&url)?;
     }
 
-    // Keep the main thread alive while the WebView is running
-    browser.webview.run();
+    // Run the browser
+    browser.run();
 
     Ok(())
 } 
