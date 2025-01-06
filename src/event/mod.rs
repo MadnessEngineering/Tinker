@@ -24,11 +24,11 @@ pub struct EventSystem {
 impl EventSystem {
     pub fn new(broker_url: &str, client_id: &str) -> Self {
         info!("Creating new event system with broker: {}", broker_url);
-        
+
         let mut options = MqttOptions::new(client_id, broker_url, 1883);
         options.set_keep_alive(Duration::from_secs(5));
         options.set_clean_session(true);
-        
+
         Self {
             client: None,
             options,
@@ -38,7 +38,7 @@ impl EventSystem {
     pub fn connect(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         debug!("Connecting to MQTT broker...");
         let (client, mut connection) = Client::new(self.options.clone(), 10);
-        
+
         // Spawn a thread to handle incoming messages
         std::thread::spawn(move || {
             debug!("Starting MQTT event loop");
@@ -54,8 +54,8 @@ impl EventSystem {
         Ok(())
     }
 
-    pub fn publish(&self, event: BrowserEvent) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(client) = &self.client {
+    pub fn publish(&mut self, event: BrowserEvent) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(ref mut client) = self.client {
             let topic = match event {
                 BrowserEvent::Navigation { .. } => "browser/navigation",
                 BrowserEvent::TabCreated { .. } => "browser/tabs/created",
@@ -76,8 +76,8 @@ impl EventSystem {
         }
     }
 
-    pub fn subscribe(&self, topic: &str) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(client) = &self.client {
+    pub fn subscribe(&mut self, topic: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(ref mut client) = self.client {
             debug!("Subscribing to topic: {}", topic);
             client.subscribe(topic, QoS::AtLeastOnce)?;
             Ok(())
