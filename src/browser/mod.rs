@@ -4,6 +4,11 @@ use wry::{WebView, WebViewBuilder, Result as WryResult};
 use tracing::{info, error, debug};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{channel, Sender, Receiver};
+use wry::keyboard::{KeyCode, ModifiersState};
+
+mod keyboard;
+use keyboard::{KeyCommand, handle_keyboard_input};
 
 pub struct BrowserEngine {
     window: Option<WebView>,
@@ -13,6 +18,8 @@ pub struct BrowserEngine {
     tabs: HashMap<usize, Arc<Mutex<Tab>>>,
     active_tab: usize,
     next_tab_id: usize,
+    keyboard_tx: Option<Sender<(KeyCode, ModifiersState)>>,
+    keyboard_rx: Option<Receiver<(KeyCode, ModifiersState)>>,
 }
 
 struct Tab {
@@ -34,7 +41,9 @@ impl BrowserEngine {
         let mut tabs = HashMap::new();
         tabs.insert(0, initial_tab);
 
-        let engine = Self {
+        let (tx, rx) = channel();
+
+        let mut engine = Self {
             window: None,
             title: String::from("Tinker Workshop"),
             history: vec![String::from("about:blank")],
@@ -42,16 +51,31 @@ impl BrowserEngine {
             tabs,
             active_tab: 0,
             next_tab_id: 1,
+            keyboard_tx: Some(tx),
+            keyboard_rx: Some(rx),
         };
 
+        engine.initialize_webviews(headless)?;
+        
         Ok(engine)
     }
 
     fn initialize_webviews(&mut self, headless: bool) -> WryResult<()> {
         let dummy = DummyWindow;
+        let keyboard_tx = self.keyboard_tx.as_ref().cloned();
+
         self.window = Some(
             WebViewBuilder::new(&dummy)
                 .with_url("about:blank")?
+                .with_keyboard_handler(move |key, modifiers| {
+                    if let Some(tx) = &keyboard_tx {
+                        if tx.send((key, modifiers)).is_ok() {
+                            debug!("Sent keyboard event: {:?} with modifiers: {:?}", key, modifiers);
+                            return true;
+                        }
+                    }
+                    false
+                })
                 .build()?
         );
 
@@ -174,9 +198,19 @@ impl BrowserEngine {
         }
     }
 
-    pub fn run(&self) {
+    pub fn run(&mut self) {
         if let Some(window) = &self.window {
             loop {
+                // Handle keyboard events
+                if let Some(rx) = &self.keyboard_rx {
+                    if let Ok((key, modifiers)) = rx.try_recv() {
+                        if let Err(e) = self.handle_keyboard_event(key, modifiers) {
+                            error!("Failed to handle keyboard event: {:?}", e);
+                        }
+                    }
+                }
+
+                // Keep the WebView alive
                 window.evaluate_script("").unwrap_or(());
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
@@ -193,6 +227,41 @@ impl BrowserEngine {
                         .with_url(&tab.url)?
                         .build()?
                 );
+            }
+        }
+        Ok(())
+    }
+
+    pub fn handle_keyboard_event(&mut self, key: KeyCode, modifiers: ModifiersState) -> WryResult<()> {
+        if let Some(command) = handle_keyboard_input(key, modifiers) {
+            debug!("Handling keyboard command: {:?}", command);
+            match command {
+                KeyCommand::Back => self.back()?,
+                KeyCommand::Forward => self.forward()?,
+                KeyCommand::Refresh => self.refresh()?,
+                KeyCommand::NewTab => {
+                    self.new_tab(None)?;
+                }
+                KeyCommand::CloseTab => {
+                    self.close_tab(self.active_tab)?;
+                }
+                KeyCommand::SwitchTab(index) => {
+                    if index < self.tabs.len() {
+                        self.switch_tab(index)?;
+                    }
+                }
+                KeyCommand::FocusAddressBar => {
+                    // TODO: Implement address bar focus
+                    debug!("Address bar focus not implemented yet");
+                }
+                KeyCommand::StopLoading => {
+                    if let Some(tab) = self.tabs.get(&self.active_tab) {
+                        let tab = tab.lock().unwrap();
+                        if let Some(webview) = &tab.webview {
+                            webview.evaluate_script("window.stop()")?;
+                        }
+                    }
+                }
             }
         }
         Ok(())
@@ -245,20 +314,65 @@ mod tests {
     }
 
     #[test]
-    fn test_history_management() {
+    fn test_keyboard_navigation() {
         setup();
         let mut browser = BrowserEngine::forge(true).unwrap();
         
-        // Navigate to a few pages
-        assert!(browser.navigate("https://example.com").is_ok());
-        assert!(browser.navigate("https://test.com").is_ok());
+        // Navigate to a page
+        browser.navigate("https://example.com").unwrap();
         
-        // Test back
-        assert!(browser.back().is_ok());
+        // Test back command with Alt+Left
+        browser.handle_keyboard_event(
+            KeyCode::ArrowLeft,
+            ModifiersState::ALT
+        ).unwrap();
+        assert_eq!(browser.current_index, 0);
+        
+        // Test forward command with Alt+Right
+        browser.handle_keyboard_event(
+            KeyCode::ArrowRight,
+            ModifiersState::ALT
+        ).unwrap();
         assert_eq!(browser.current_index, 1);
+    }
+
+    #[test]
+    fn test_keyboard_tabs() {
+        setup();
+        let mut browser = BrowserEngine::forge(true).unwrap();
+        let initial_tab_count = browser.tabs.len();
         
-        // Test forward
-        assert!(browser.forward().is_ok());
-        assert_eq!(browser.current_index, 2);
+        // Create new tab with Ctrl+T
+        browser.handle_keyboard_event(
+            KeyCode::KeyT,
+            ModifiersState::CONTROL
+        ).unwrap();
+        assert_eq!(browser.tabs.len(), initial_tab_count + 1);
+        
+        // Switch to first tab with Ctrl+1
+        browser.handle_keyboard_event(
+            KeyCode::Digit1,
+            ModifiersState::CONTROL
+        ).unwrap();
+        assert_eq!(browser.active_tab, 0);
+        
+        // Close current tab with Ctrl+W
+        browser.handle_keyboard_event(
+            KeyCode::KeyW,
+            ModifiersState::CONTROL
+        ).unwrap();
+        assert_eq!(browser.tabs.len(), initial_tab_count);
+    }
+
+    #[test]
+    fn test_keyboard_refresh() {
+        setup();
+        let mut browser = BrowserEngine::forge(true).unwrap();
+        
+        // Test refresh with Ctrl+R
+        assert!(browser.handle_keyboard_event(
+            KeyCode::KeyR,
+            ModifiersState::CONTROL
+        ).is_ok());
     }
 } 
