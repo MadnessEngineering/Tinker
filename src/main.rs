@@ -1,6 +1,7 @@
 use clap::Parser;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
+use crate::browser::BrowserEngine;
 
 mod browser;
 mod event;
@@ -27,7 +28,7 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> WryResult<()> {
     let cli = Cli::parse();
 
     // Initialize logging
@@ -38,4 +39,12 @@ async fn main() {
     info!("Starting Tinker Workshop...");
     info!("MQTT Broker: {}", cli.mqtt_url);
     info!("Headless Mode: {}", cli.headless);
+
+    // Forge our browser engine
+    let browser = BrowserEngine::forge(cli.headless)?;
+    
+    // Keep the main thread alive while the WebView is running
+    browser.webview.run();
+
+    Ok(())
 } 
