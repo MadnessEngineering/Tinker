@@ -10,6 +10,7 @@ use wry::{WebView, WebViewBuilder};
 use tracing::debug;
 use crate::event::{EventSystem, BrowserEvent};
 use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{channel, Receiver};
 
 mod tabs;
 mod event_viewer;
@@ -17,7 +18,7 @@ mod tab_ui;
 
 use tabs::TabManager;
 use event_viewer::EventViewer;
-use tab_ui::TabBar;
+use tab_ui::{TabBar, TabCommand};
 
 pub struct BrowserEngine {
     headless: bool,
@@ -26,6 +27,7 @@ pub struct BrowserEngine {
     event_viewer: EventViewer,
     tab_bar: Option<TabBar>,
     content_view: Option<WebView>,
+    command_rx: Option<Receiver<TabCommand>>,
 }
 
 impl BrowserEngine {
@@ -37,6 +39,7 @@ impl BrowserEngine {
             event_viewer: EventViewer::new(),
             tab_bar: None,
             content_view: None,
+            command_rx: None,
         }
     }
 
@@ -51,7 +54,7 @@ impl BrowserEngine {
         Ok(())
     }
 
-    pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
         debug!("Starting browser engine...");
 
         let event_loop = EventLoop::new();
@@ -67,7 +70,12 @@ impl BrowserEngine {
 
         // Create the tab bar if not in headless mode
         if !self.headless {
-            self.tab_bar = Some(TabBar::new(&window)?);
+            // Create channel for tab commands
+            let (command_tx, command_rx) = channel();
+            self.command_rx = Some(command_rx);
+            
+            // Create the tab bar with the command sender
+            self.tab_bar = Some(TabBar::new(&window, command_tx)?);
             
             // Add existing tabs to the UI
             if let Some(tab_bar) = &self.tab_bar {
@@ -103,12 +111,31 @@ impl BrowserEngine {
 
         let headless = self.headless;
         let events = self.events.clone();
+        let command_rx = self.command_rx.take();
+        
         event_loop.run(move |event, _, control_flow| {
             *control_flow = if headless {
                 ControlFlow::Exit
             } else {
                 ControlFlow::Wait
             };
+
+            // Handle tab commands
+            if let Some(rx) = &command_rx {
+                while let Ok(command) = rx.try_recv() {
+                    match command {
+                        TabCommand::Create { url } => {
+                            let _ = self.create_tab(&url);
+                        }
+                        TabCommand::Close { id } => {
+                            let _ = self.close_tab(id);
+                        }
+                        TabCommand::Switch { id } => {
+                            let _ = self.switch_to_tab(id);
+                        }
+                    }
+                }
+            }
 
             match event {
                 Event::NewEvents(StartCause::Init) => {

@@ -1,6 +1,13 @@
 use wry::{WebView, WebViewBuilder};
 use tao::window::Window;
 use crate::event::BrowserEvent;
+use std::sync::mpsc::{channel, Sender};
+
+pub enum TabCommand {
+    Create { url: String },
+    Close { id: usize },
+    Switch { id: usize },
+}
 
 pub struct TabBar {
     container: WebView,
@@ -8,7 +15,7 @@ pub struct TabBar {
 }
 
 impl TabBar {
-    pub fn new(window: &Window) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(window: &Window, command_tx: Sender<TabCommand>) -> Result<Self, Box<dyn std::error::Error>> {
         let height = 40; // Height of the tab bar in pixels
         
         // Create a WebView for the tab bar with custom HTML/CSS
@@ -19,14 +26,16 @@ impl TabBar {
                 // Handle IPC messages from the tab bar UI
                 if let Ok(event) = serde_json::from_str::<BrowserEvent>(&msg) {
                     match event {
-                        BrowserEvent::TabCreated { id } => {
-                            // Handle new tab creation
+                        BrowserEvent::TabCreated { .. } => {
+                            let _ = command_tx.send(TabCommand::Create {
+                                url: "about:blank".to_string()
+                            });
                         }
                         BrowserEvent::TabClosed { id } => {
-                            // Handle tab closing
+                            let _ = command_tx.send(TabCommand::Close { id });
                         }
                         BrowserEvent::TabSwitched { id } => {
-                            // Handle tab switching
+                            let _ = command_tx.send(TabCommand::Switch { id });
                         }
                         _ => {}
                     }
