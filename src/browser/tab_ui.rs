@@ -1,7 +1,7 @@
 use wry::{WebView, WebViewBuilder};
 use tao::window::Window;
 use crate::event::BrowserEvent;
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::Sender;
 
 pub enum TabCommand {
     Create { url: String },
@@ -22,7 +22,7 @@ impl TabBar {
         let container = WebViewBuilder::new(window)
             .with_html(include_str!("../templates/tab_bar.html"))?
             .with_initialization_script(include_str!("../templates/tab_bar.js"))
-            .with_ipc_handler(move |msg| {
+            .with_ipc_handler(move |msg: String| {
                 // Handle IPC messages from the tab bar UI
                 if let Ok(event) = serde_json::from_str::<BrowserEvent>(&msg) {
                     match event {

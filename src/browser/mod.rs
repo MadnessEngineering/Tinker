@@ -68,6 +68,14 @@ impl BrowserEngine {
 
         let window = window_builder.build(&event_loop)?;
 
+        // Create the content view
+        if let Some(active_tab) = self.tabs.get_active_tab() {
+            let content_view = WebViewBuilder::new(&window)
+                .with_url(&active_tab.url)?
+                .build()?;
+            self.content_view = Some(content_view);
+        }
+
         // Create the tab bar if not in headless mode
         if !self.headless {
             // Create channel for tab commands
@@ -85,14 +93,6 @@ impl BrowserEngine {
                 if let Some(active_tab) = self.tabs.get_active_tab() {
                     tab_bar.set_active_tab(active_tab.id);
                 }
-            }
-
-            // Create the content view
-            if let Some(active_tab) = self.tabs.get_active_tab() {
-                let content_view = WebViewBuilder::new(&window)
-                    .with_url(&active_tab.url)?
-                    .build()?;
-                self.content_view = Some(content_view);
             }
         }
 
