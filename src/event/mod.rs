@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, error, debug};
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BrowserEvent {
     Navigation { url: String },
     TabCreated { id: usize },

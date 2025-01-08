@@ -33,6 +33,22 @@ struct Args {
     /// MQTT broker URL for events
     #[arg(long, default_value = "localhost")]
     mqtt_broker: String,
+
+    /// Start recording events on startup
+    #[arg(long)]
+    record: bool,
+
+    /// Path to save the recording (required if --record is used)
+    #[arg(long)]
+    record_path: Option<String>,
+
+    /// Path to load a recording for replay
+    #[arg(long)]
+    replay: Option<String>,
+
+    /// Playback speed for replay (default: 1.0)
+    #[arg(long, default_value = "1.0")]
+    replay_speed: f32,
 }
 
 #[tokio::main]
@@ -64,6 +80,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         debug!("Failed to initialize event system: {}", e);
     }
     
+    // Handle recording
+    let record_path = args.record_path.as_deref();
+    if args.record {
+        if let Some(path) = record_path {
+            browser.start_recording();
+            debug!("Recording will be saved to: {}", path);
+        } else {
+            return Err("--record-path is required when --record is used".into());
+        }
+    }
+
+    // Handle replay
+    if let Some(path) = args.replay.as_deref() {
+        browser.load_recording(path)?;
+        browser.set_replay_speed(args.replay_speed);
+        browser.start_replay();
+        debug!("Replaying events from: {} at {}x speed", path, args.replay_speed);
+    }
+
     if let Some(url) = args.url {
         browser.navigate(&url)?;
     }
@@ -75,6 +110,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     browser.run()?;
+
+    // Save recording if we were recording
+    if args.record {
+        if let Some(path) = record_path {
+            browser.save_recording(path)?;
+        }
+    }
 
     Ok(())
 }

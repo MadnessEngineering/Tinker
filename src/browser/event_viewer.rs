@@ -10,14 +10,17 @@ pub struct EventEntry {
     pub event: BrowserEvent,
 }
 
+#[derive(Default)]
 pub struct EventViewer {
     events: VecDeque<EventEntry>,
+    max_events: usize,
 }
 
 impl EventViewer {
     pub fn new() -> Self {
         EventViewer {
             events: VecDeque::with_capacity(MAX_EVENTS),
+            max_events: MAX_EVENTS,
         }
     }
 

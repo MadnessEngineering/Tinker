@@ -1,7 +1,5 @@
 use wry::{WebView, WebViewBuilder};
 use tao::window::Window;
-use crate::event::BrowserEvent;
-use std::sync::mpsc::Sender;
 use tracing::debug;
 
 pub enum TabCommand {
@@ -16,7 +14,10 @@ pub struct TabBar {
 }
 
 impl TabBar {
-    pub fn new(window: &Window, command_tx: Sender<TabCommand>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new<F>(window: &Window, command_handler: F) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        F: Fn(TabCommand) + Send + 'static,
+    {
         let height = 40; // Height of the tab bar in pixels
         
         // Create a WebView for the tab bar with custom HTML/CSS
@@ -36,18 +37,18 @@ impl TabBar {
                                     .unwrap_or("about:blank")
                                     .to_string();
                                 debug!("Creating new tab with URL: {}", url);
-                                let _ = command_tx.send(TabCommand::Create { url });
+                                command_handler(TabCommand::Create { url });
                             }
                             "TabClosed" => {
                                 if let Some(id) = value.get("id").and_then(|i| i.as_u64()) {
                                     debug!("Closing tab with ID: {}", id);
-                                    let _ = command_tx.send(TabCommand::Close { id: id as usize });
+                                    command_handler(TabCommand::Close { id: id as usize });
                                 }
                             }
                             "TabSwitched" => {
                                 if let Some(id) = value.get("id").and_then(|i| i.as_u64()) {
                                     debug!("Switching to tab with ID: {}", id);
-                                    let _ = command_tx.send(TabCommand::Switch { id: id as usize });
+                                    command_handler(TabCommand::Switch { id: id as usize });
                                 }
                             }
                             _ => {
@@ -77,11 +78,6 @@ impl TabBar {
         let _ = self.container.evaluate_script(&script);
     }
 
-    pub fn set_active_tab(&self, id: usize) {
-        let script = format!("setActiveTab({});", id);
-        let _ = self.container.evaluate_script(&script);
-    }
-
     pub fn add_tab(&self, id: usize, title: &str, url: &str) {
         let script = format!(
             "addTab({}, '{}', '{}');",
@@ -97,7 +93,8 @@ impl TabBar {
         let _ = self.container.evaluate_script(&script);
     }
 
-    pub fn get_height(&self) -> u32 {
-        self.height
+    pub fn set_active_tab(&self, id: usize) {
+        let script = format!("setActiveTab({});", id);
+        let _ = self.container.evaluate_script(&script);
     }
 } 

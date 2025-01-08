@@ -8,17 +8,18 @@ pub struct Tab {
     pub title: String,
 }
 
+#[derive(Default)]
 pub struct TabManager {
-    tabs: HashMap<usize, Tab>,
-    active_tab: usize,
+    tabs: Vec<Tab>,
+    active_tab: Option<usize>,
     next_id: usize,
 }
 
 impl TabManager {
     pub fn new() -> Self {
         let mut manager = TabManager {
-            tabs: HashMap::new(),
-            active_tab: 0,
+            tabs: Vec::new(),
+            active_tab: None,
             next_id: 0,
         };
         // Create initial tab
@@ -36,15 +37,15 @@ impl TabManager {
             title: String::from("New Tab"),
         };
 
-        self.tabs.insert(id, tab);
-        self.active_tab = id;
+        self.tabs.push(tab);
+        self.active_tab = Some(id);
         debug!("Created new tab with id: {}", id);
         id
     }
 
     pub fn close_tab(&mut self, id: usize) -> bool {
         // Cannot close a non-existent tab
-        if !self.tabs.contains_key(&id) {
+        if id >= self.tabs.len() {
             debug!("Tab {} does not exist", id);
             return false;
         }
@@ -56,21 +57,21 @@ impl TabManager {
         }
 
         // If we're closing the active tab, switch to another one first
-        if self.active_tab == id {
-            if let Some(&other_id) = self.tabs.keys().find(|&&k| k != id) {
-                self.active_tab = other_id;
+        if self.active_tab == Some(id) {
+            if let Some(other_id) = self.tabs.iter().position(|tab| tab.id != id) {
+                self.active_tab = Some(other_id);
             }
         }
 
         // Remove the tab
-        self.tabs.remove(&id);
+        self.tabs.remove(id);
         debug!("Closed tab: {}", id);
         true
     }
 
     pub fn switch_to_tab(&mut self, id: usize) -> bool {
-        if self.tabs.contains_key(&id) {
-            self.active_tab = id;
+        if id < self.tabs.len() {
+            self.active_tab = Some(id);
             debug!("Switched to tab: {}", id);
             true
         } else {
@@ -79,21 +80,21 @@ impl TabManager {
     }
 
     pub fn get_active_tab(&self) -> Option<&Tab> {
-        self.tabs.get(&self.active_tab)
+        self.active_tab.map(|index| &self.tabs[index])
     }
 
     pub fn get_active_tab_mut(&mut self) -> Option<&mut Tab> {
-        self.tabs.get_mut(&self.active_tab)
+        self.active_tab.map(|index| &mut self.tabs[index])
     }
 
     pub fn get_all_tabs(&self) -> Vec<&Tab> {
-        self.tabs.values().collect()
+        self.tabs.iter().collect()
     }
 
     pub fn update_tab_title(&mut self, id: usize, title: String) -> bool {
-        if let Some(tab) = self.tabs.get_mut(&id) {
-            tab.title = title;
-            debug!("Updated title for tab {}: {}", id, tab.title);
+        if id < self.tabs.len() {
+            self.tabs[id].title = title;
+            debug!("Updated title for tab {}: {}", id, self.tabs[id].title);
             true
         } else {
             false
@@ -101,9 +102,9 @@ impl TabManager {
     }
 
     pub fn update_tab_url(&mut self, id: usize, url: String) -> bool {
-        if let Some(tab) = self.tabs.get_mut(&id) {
-            tab.url = url;
-            debug!("Updated URL for tab {}: {}", id, tab.url);
+        if id < self.tabs.len() {
+            self.tabs[id].url = url;
+            debug!("Updated URL for tab {}: {}", id, self.tabs[id].url);
             true
         } else {
             false
@@ -120,7 +121,7 @@ mod tests {
         let mut manager = TabManager::new();
         let id = manager.create_tab("https://example.com".to_string());
         assert_eq!(manager.tabs.len(), 2); // Including initial tab
-        assert_eq!(manager.active_tab, id);
+        assert_eq!(manager.active_tab, Some(id));
     }
 
     #[test]
@@ -130,10 +131,10 @@ mod tests {
         let id2 = manager.create_tab("https://example2.com".to_string());
         
         assert!(manager.switch_to_tab(id1));
-        assert_eq!(manager.active_tab, id1);
+        assert_eq!(manager.active_tab, Some(id1));
         
         assert!(manager.switch_to_tab(id2));
-        assert_eq!(manager.active_tab, id2);
+        assert_eq!(manager.active_tab, Some(id2));
     }
 
     #[test]
@@ -147,17 +148,17 @@ mod tests {
         
         // Close first new tab should succeed
         assert!(manager.close_tab(id1));
-        assert!(!manager.tabs.contains_key(&id1));
+        assert!(manager.tabs.iter().position(|tab| tab.id == id1).is_none());
         assert_eq!(manager.tabs.len(), 2);
         
         // Close second new tab should succeed
         assert!(manager.close_tab(id2));
-        assert!(!manager.tabs.contains_key(&id2));
+        assert!(manager.tabs.iter().position(|tab| tab.id == id2).is_none());
         assert_eq!(manager.tabs.len(), 1);
         
         // Cannot close the initial tab (last remaining tab)
         assert!(!manager.close_tab(initial_tab));
-        assert!(manager.tabs.contains_key(&initial_tab));
+        assert!(manager.tabs.iter().position(|tab| tab.id == initial_tab).is_some());
         assert_eq!(manager.tabs.len(), 1);
 
         // Cannot close non-existent tab
@@ -170,7 +171,7 @@ mod tests {
         let id = manager.create_tab("https://example.com".to_string());
         
         assert!(manager.update_tab_title(id, "New Title".to_string()));
-        if let Some(tab) = manager.tabs.get(&id) {
+        if let Some(tab) = manager.get_active_tab() {
             assert_eq!(tab.title, "New Title");
         }
         
@@ -184,7 +185,7 @@ mod tests {
         let id = manager.create_tab("https://example.com".to_string());
         
         assert!(manager.update_tab_url(id, "https://new-example.com".to_string()));
-        if let Some(tab) = manager.tabs.get(&id) {
+        if let Some(tab) = manager.get_active_tab() {
             assert_eq!(tab.url, "https://new-example.com");
         }
         
