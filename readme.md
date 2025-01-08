@@ -72,6 +72,41 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
 - 🧵 Event loop state must be carefully managed to prevent window/WebView drops
 - 🔄 Tab state changes should be atomic to prevent race conditions
 
+### JavaScript Engine Integration
+- 🎯 Primary Focus: V8 Engine Integration
+  - Industry standard JavaScript engine
+  - Powers Chrome and Edge browsers
+  - Extensive tooling and debugging capabilities
+
+- 🔄 Future Engine Support:
+  - SpiderMonkey (Firefox)
+  - JavaScriptCore (Safari)
+
+- 🏗️ Architecture Design:
+  - Common interface layer for all engines
+  - Engine-specific implementations isolated in modules
+  - Unified manager for engine operations
+  - Hot-swapping capability for testing different engines
+
+- 🧪 Testing Considerations:
+  - Performance benchmarking between engines
+  - Compatibility testing across engines
+  - Memory usage monitoring
+  - Script execution timing analysis
+
+- 📊 Metrics Collection:
+  - Script execution time
+  - Memory consumption
+  - Garbage collection patterns
+  - Error handling differences
+
+- 🔍 Development Approach:
+  1. Implement V8 integration first
+  2. Add engine selection configuration
+  3. Build performance monitoring
+  4. Add remaining engines as needed
+  5. Implement comparison tooling
+
 ## Engineering Roadmap
 
 ### Phase 1: Foundation Works
