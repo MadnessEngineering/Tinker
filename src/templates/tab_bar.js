@@ -22,10 +22,10 @@ function addTab(id, title, url) {
     const tabBar = document.getElementById('tab-bar');
     const newTab = document.getElementById('new-tab');
     const tab = createTabElement(id, title, url);
-    
+
     tabBar.insertBefore(tab, newTab);
     tabs.set(id, { title, url });
-    
+
     if (activeTabId === null) {
         setActiveTab(id);
     }
@@ -46,7 +46,7 @@ function removeTab(id) {
     if (tab) {
         tab.remove();
         tabs.delete(id);
-        
+
         // If we removed the active tab, activate another one
         if (activeTabId === id) {
             const remainingTabs = Array.from(tabs.keys());
@@ -65,7 +65,7 @@ function setActiveTab(id) {
     if (currentActive) {
         currentActive.classList.remove('active');
     }
-    
+
     // Add active class to new active tab
     const newActive = document.querySelector(`.tab[data-id="${id}"]`);
     if (newActive) {
@@ -78,7 +78,7 @@ function setActiveTab(id) {
 function createNewTab() {
     window.ipc.postMessage(JSON.stringify({
         type: 'TabCreated',
-        url: 'about:blank'
+        url: 'https://github.com/DanEdens/Tinker'
     }));
 }
 

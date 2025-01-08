@@ -165,11 +165,12 @@ impl BrowserEngine {
         // Create initial tab if none exists
         if let Ok(mut tabs) = self.tabs.lock() {
             if tabs.get_all_tabs().is_empty() {
-                let id = tabs.create_tab("about:blank".to_string());
+                let default_url = "https://github.com/DanEdens/Tinker";
+                let id = tabs.create_tab(default_url.to_string());
 
                 // Create the initial WebView
                 let content_view = WebViewBuilder::new(&window)
-                    .with_url("about:blank")
+                    .with_url(default_url)
                     .map_err(|e| {
                         error!("Failed to set initial WebView URL: {}", e);
                         Box::new(e) as Box<dyn std::error::Error>
@@ -449,6 +450,8 @@ impl BrowserEngine {
 mod tests {
     use super::*;
 
+    const DEFAULT_URL: &str = "https://github.com/DanEdens/Tinker";
+
     #[test]
     fn test_browser_navigation() {
         let mut browser = BrowserEngine::new(false, None);
@@ -456,10 +459,10 @@ mod tests {
         // Create initial tab and get its URL
         let initial_url = {
             let mut tabs = browser.tabs.lock().unwrap();
-            let id = tabs.create_tab("about:blank".to_string());
+            let id = tabs.create_tab(DEFAULT_URL.to_string());
             tabs.get_active_tab().map(|tab| tab.url.clone()).unwrap()
         };
-        assert_eq!(initial_url, "about:blank");
+        assert_eq!(initial_url, DEFAULT_URL);
 
         // Navigate to the test URL
         browser.navigate("https://www.example.com").unwrap();
