@@ -54,6 +54,24 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
 - 🎯 Implemented CLI interface with version support and descriptive help
 - 🔧 Fixed test suite issues and improved test reliability
 
+## Lessons Learned
+
+### WebView Management
+- 🔍 WebViews must maintain a strong reference to their parent window to prevent disappearing
+- 🎯 Each tab should own its WebView instance rather than sharing a single one
+- 🔄 When switching tabs, load the URL in the existing WebView instead of creating a new one
+- 🖼️ WebView initialization requires proper display parameters:
+  - `with_visible(true)` to ensure visibility
+  - `with_transparent(false)` for proper background rendering
+  - Background color initialization to prevent blank displays
+- ⚠️ Creating new WebViews for each tab switch can cause flickering and state loss
+- 🏗️ WebView creation should happen once per tab, not on every tab switch
+
+### Thread Safety
+- 🔒 WebView operations must be properly synchronized using Arc<Mutex<>>
+- 🧵 Event loop state must be carefully managed to prevent window/WebView drops
+- 🔄 Tab state changes should be atomic to prevent race conditions
+
 ## Engineering Roadmap
 
 ### Phase 1: Foundation Works
@@ -124,6 +142,15 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
   - [ ] Design Custom Blueprints
   - [ ] Construct Export Tools
   - [ ] Build Analytics Workshop
+
+- [ ] JavaScript Engine Workshop
+  - [ ] Design Engine Interface Layer
+  - [ ] Implement V8 Integration
+  - [ ] Engineer SpiderMonkey Support
+  - [ ] Craft JavaScriptCore Bridge
+  - [ ] Build Engine Performance Analyzer
+  - [ ] Create Engine Switching Mechanism
+  - [ ] Design Concurrent Testing Tools
 
 ### Phase 4: Integration Workshop
 - [ ] External Tool Bench

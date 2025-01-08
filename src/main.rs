@@ -81,12 +81,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load URL if specified
     if let Some(url) = args.url {
+        let url = url.clone();
         browser.navigate(&url)?;
     }
 
     // Start recording if enabled
     if args.record {
         if let Some(path) = args.record_path {
+            let path = path.clone();
             browser.start_recording(&path);
             info!("Recording will be saved to {}", path);
         } else {
@@ -101,6 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             error!("Replay file not found: {}", path);
             return Err("Replay file not found".into());
         }
+        let path = path.clone();
         browser.load_recording(&path)?;
         if let Some(speed) = args.replay_speed {
             browser.set_replay_speed(speed);

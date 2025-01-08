@@ -259,7 +259,7 @@ impl BrowserEngine {
                         if let Ok(mut tabs) = tabs.lock() {
                             let id = tabs.create_tab(url.clone());
                             info!("Created new tab {} with URL: {}", id, url);
-                            
+
                             // Update tab UI
                             if let Some(ref bar) = tab_bar {
                                 bar.add_tab(id, "New Tab", &url);

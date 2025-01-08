@@ -3,6 +3,7 @@ use tao::window::Window;
 use tracing::debug;
 use std::sync::{Arc, Mutex};
 use crate::templates::{TAB_BAR_HTML, TAB_BAR_JS};
+use serde_json;
 
 pub enum TabCommand {
     Create { url: String },
@@ -28,31 +29,32 @@ impl TabBar {
             .with_html(TAB_BAR_HTML)?
             .with_initialization_script(TAB_BAR_JS)
             .with_ipc_handler(move |msg: String| {
-                match msg.split_once(':') {
-                    Some(("TabCreated", url)) => {
-                        let url = url.trim()
-                            .strip_prefix('"')
-                            .and_then(|s| s.strip_suffix('"'))
-                            .unwrap_or("about:blank")
-                            .to_string();
-                        debug!("Creating new tab with URL: {}", url);
-                        command_handler(TabCommand::Create { url });
-                    }
-                    Some(("TabClosed", id)) => {
-                        if let Ok(id) = id.trim().parse::<usize>() {
-                            debug!("Closing tab with ID: {}", id);
-                            command_handler(TabCommand::Close { id });
+                debug!("Received IPC message: {}", msg);
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&msg) {
+                    match (json["type"].as_str(), json.get("url"), json.get("id")) {
+                        (Some("TabCreated"), Some(url), _) => {
+                            let url = url.as_str().unwrap_or("about:blank").to_string();
+                            debug!("Creating new tab with URL: {}", url);
+                            command_handler(TabCommand::Create { url });
+                        }
+                        (Some("TabClosed"), _, Some(id)) => {
+                            if let Some(id) = id.as_u64() {
+                                debug!("Closing tab with ID: {}", id);
+                                command_handler(TabCommand::Close { id: id as usize });
+                            }
+                        }
+                        (Some("TabSwitched"), _, Some(id)) => {
+                            if let Some(id) = id.as_u64() {
+                                debug!("Switching to tab with ID: {}", id);
+                                command_handler(TabCommand::Switch { id: id as usize });
+                            }
+                        }
+                        _ => {
+                            debug!("Unknown IPC message format: {}", msg);
                         }
                     }
-                    Some(("TabSwitched", id)) => {
-                        if let Ok(id) = id.trim().parse::<usize>() {
-                            debug!("Switching to tab with ID: {}", id);
-                            command_handler(TabCommand::Switch { id });
-                        }
-                    }
-                    _ => {
-                        debug!("Unknown IPC message format: {}", msg);
-                    }
+                } else {
+                    debug!("Failed to parse IPC message as JSON: {}", msg);
                 }
             })
             .build()?;
