@@ -8,6 +8,7 @@ pub struct EventRecorder {
     events: Vec<BrowserEvent>,
     recording: bool,
     start_time: Option<Instant>,
+    save_path: Option<String>,
 }
 
 impl EventRecorder {
@@ -18,11 +19,21 @@ impl EventRecorder {
 
     pub fn stop(&mut self) {
         self.recording = false;
+        if let Some(path) = &self.save_path {
+            if let Err(e) = self.save(path) {
+                eprintln!("Failed to save recording: {}", e);
+            }
+        }
     }
 
     pub fn record_event(&mut self, event: BrowserEvent) {
         if self.recording {
             self.events.push(event);
+            if let Some(path) = &self.save_path {
+                if let Err(e) = self.save(path) {
+                    eprintln!("Failed to save recording: {}", e);
+                }
+            }
         }
     }
 
@@ -30,6 +41,10 @@ impl EventRecorder {
         let json = serde_json::to_string(&self.events)?;
         fs::write(path, json)?;
         Ok(())
+    }
+
+    pub fn set_save_path(&mut self, path: String) {
+        self.save_path = Some(path);
     }
 }
 

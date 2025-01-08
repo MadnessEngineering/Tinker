@@ -11,27 +11,21 @@ use tao::{
     dpi::LogicalSize,
 };
 use wry::{WebView, WebViewBuilder};
-use tracing::{debug, info};
+use tracing::{debug, info, error};
 
-use crate::{
-    event::{BrowserEvent, EventSystem},
-    browser::{
-        tabs::TabManager,
-        tab_ui::{TabBar, TabCommand},
-        replay::{EventRecorder, EventPlayer},
-        event_viewer::EventViewer,
-    },
-};
+use crate::event::{BrowserEvent, EventSystem};
 
 mod tabs;
 mod event_viewer;
 mod tab_ui;
 mod replay;
 
-use tabs::TabManager;
-use event_viewer::EventViewer;
-use tab_ui::{TabBar, TabCommand};
-use replay::{EventRecorder, EventPlayer};
+use self::{
+    tabs::TabManager,
+    event_viewer::EventViewer,
+    tab_ui::{TabBar, TabCommand},
+    replay::{EventRecorder, EventPlayer},
+};
 
 #[derive(Debug)]
 enum BrowserCommand {
@@ -110,8 +104,9 @@ impl BrowserEngine {
         Ok(())
     }
 
-    pub fn start_recording(&self) {
+    pub fn start_recording(&mut self) {
         if let Ok(mut recorder) = self.recorder.lock() {
+            recorder.set_save_path("test_recording.json".to_string());
             recorder.start();
         }
     }
@@ -152,7 +147,7 @@ impl BrowserEngine {
         debug!("Starting browser engine...");
 
         let event_loop = EventLoop::new();
-        
+
         // Create the main window
         let window_builder = WindowBuilder::new()
             .with_title("Tinker Browser")
@@ -190,7 +185,7 @@ impl BrowserEngine {
                     }
                 }
             })?;
-            
+
             // Add existing tabs to the UI
             if let Ok(tabs) = self.tabs.lock() {
                 for tab in tabs.get_all_tabs() {
@@ -212,7 +207,7 @@ impl BrowserEngine {
         let tabs = self.tabs.clone();
         let tab_bar = self.tab_bar.clone();
         let mut last_replay_time = Instant::now();
-        
+
         // Store command sender for use in event loop
         let cmd_tx_for_events = cmd_tx.clone();
 
@@ -268,6 +263,7 @@ impl BrowserEngine {
                     BrowserCommand::CreateTab { url } => {
                         if let Ok(mut tabs) = tabs.lock() {
                             let id = tabs.create_tab(url.clone());
+                            info!("Created new tab {} with URL: {}", id, url);
                             if let Some(ref bar) = tab_bar {
                                 bar.add_tab(id, "New Tab", &url);
                                 bar.set_active_tab(id);
@@ -401,7 +397,7 @@ mod tests {
     #[test]
     fn test_browser_navigation() {
         let mut browser = BrowserEngine::new(false, None);
-        
+
         // Create initial tab and get its URL
         let initial_url = {
             let mut tabs = browser.tabs.lock().unwrap();
