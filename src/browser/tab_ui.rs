@@ -13,7 +13,7 @@ pub enum TabCommand {
 
 #[derive(Clone)]
 pub struct TabBar {
-    container: Arc<Mutex<WebView>>,
+    pub container: Arc<Mutex<WebView>>,
     height: u32,
 }
 
@@ -22,12 +22,21 @@ impl TabBar {
     where
         F: Fn(TabCommand) + Send + 'static,
     {
-        let height = 40; // Height of the tab bar in pixels
-        
-        // Create a WebView for the tab bar with custom HTML/CSS
+        let height = 40;
+        let window_size = window.inner_size();
+
+        // Create a WebView specifically for the tab bar UI
         let webview = WebViewBuilder::new(window)
             .with_html(TAB_BAR_HTML)?
             .with_initialization_script(TAB_BAR_JS)
+            .with_bounds(wry::Rect {
+                x: 0,
+                y: 0,
+                width: window_size.width,
+                height,
+            })
+            .with_transparent(true)
+            .with_visible(true)
             .with_ipc_handler(move |msg: String| {
                 debug!("Received IPC message: {}", msg);
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&msg) {
@@ -89,5 +98,9 @@ impl TabBar {
         if let Ok(container) = self.container.lock() {
             let _ = container.evaluate_script(&script);
         }
+    }
+
+    pub fn get_height(&self) -> u32 {
+        self.height
     }
 } 
