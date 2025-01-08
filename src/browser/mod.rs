@@ -19,12 +19,14 @@ mod tabs;
 mod event_viewer;
 mod tab_ui;
 mod replay;
+mod menu;
 
 use self::{
     tabs::TabManager,
     event_viewer::EventViewer,
     tab_ui::{TabBar, TabCommand},
     replay::{EventRecorder, EventPlayer},
+    menu::create_application_menu,
 };
 
 #[derive(Debug)]
@@ -35,6 +37,7 @@ enum BrowserCommand {
     SwitchTab { id: usize },
     RecordEvent { event: BrowserEvent },
     PlayEvent { event: BrowserEvent },
+    Menu(menu::MenuCommand),
 }
 
 pub struct BrowserEngine {
@@ -160,6 +163,19 @@ impl BrowserEngine {
 
         let window = window_builder.build(&event_loop)?;
         let window = Arc::new(window);
+
+        // Create channels for browser commands
+        let (cmd_tx, cmd_rx) = channel::<BrowserCommand>();
+
+        // Create and set the menu bar if not in headless mode
+        if !self.headless {
+            let menu_tx = cmd_tx.clone();
+            let menu = create_application_menu(&window, move |cmd| {
+                let _ = menu_tx.send(BrowserCommand::Menu(cmd));
+            });
+            window.set_menu(menu);
+        }
+
         self.window = Some(window.clone());
 
         // Create initial tab if none exists
@@ -192,9 +208,6 @@ impl BrowserEngine {
                 self.content_view = Some(content_view);
             }
         }
-
-        // Create channels for browser commands
-        let (cmd_tx, cmd_rx) = channel::<BrowserCommand>();
 
         // Create the tab bar if not in headless mode
         if !self.headless {
@@ -396,6 +409,9 @@ impl BrowserEngine {
                             _ => {}
                         }
                     }
+                    BrowserCommand::Menu(cmd) => {
+                        self.handle_menu_command(cmd);
+                    }
                 }
             }
 
@@ -442,6 +458,86 @@ impl BrowserEngine {
             Ok(())
         } else {
             Err("Failed to lock tabs".into())
+        }
+    }
+
+    fn handle_menu_command(&mut self, cmd: menu::MenuCommand) {
+        use menu::MenuCommand::*;
+        match cmd {
+            NewTab => {
+                let _ = self.create_tab("about:blank");
+            }
+            NewWindow => {
+                debug!("New window functionality not yet implemented");
+            }
+            CloseTab => {
+                if let Ok(tabs) = self.tabs.lock() {
+                    if let Some(active_tab) = tabs.get_active_tab() {
+                        let id = active_tab.id;
+                        drop(tabs); // Release the lock before sending command
+                        let _ = self.cmd_tx.send(BrowserCommand::CloseTab { id });
+                    }
+                }
+            }
+            CloseWindow => {
+                if let Some(window) = &self.window {
+                    window.close();
+                }
+            }
+            ZoomIn => {
+                if let Some(view) = &self.content_view {
+                    if let Ok(view) = view.lock() {
+                        let _ = view.evaluate_script("document.body.style.zoom = (parseFloat(document.body.style.zoom || '1.0') * 1.1).toString()");
+                    }
+                }
+            }
+            ZoomOut => {
+                if let Some(view) = &self.content_view {
+                    if let Ok(view) = view.lock() {
+                        let _ = view.evaluate_script("document.body.style.zoom = (parseFloat(document.body.style.zoom || '1.0') * 0.9).toString()");
+                    }
+                }
+            }
+            ZoomReset => {
+                if let Some(view) = &self.content_view {
+                    if let Ok(view) = view.lock() {
+                        let _ = view.evaluate_script("document.body.style.zoom = '1.0'");
+                    }
+                }
+            }
+            ToggleDevTools => {
+                debug!("DevTools functionality not yet implemented");
+            }
+            StartRecording => {
+                self.start_recording("test_recording.json");
+            }
+            StopRecording => {
+                self.stop_recording();
+            }
+            RunTests => {
+                debug!("Test runner not yet implemented");
+            }
+            ViewTestReport => {
+                debug!("Test report viewer not yet implemented");
+            }
+            SwitchEngine(engine) => {
+                debug!("Engine switching not yet implemented: {:?}", engine);
+            }
+            OpenJsConsole => {
+                debug!("JavaScript console not yet implemented");
+            }
+            OpenPerformanceMonitor => {
+                debug!("Performance monitor not yet implemented");
+            }
+            OpenDocumentation => {
+                let _ = self.create_tab("https://github.com/DanEdens/Tinker/wiki");
+            }
+            ReportIssue => {
+                let _ = self.create_tab("https://github.com/DanEdens/Tinker/issues/new");
+            }
+            About => {
+                debug!("About dialog not yet implemented");
+            }
         }
     }
 }
