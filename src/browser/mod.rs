@@ -1,24 +1,23 @@
 //! Browser engine implementation
 
 use std::{
-    error::Error as StdError,
-    sync::{Arc, Mutex},
-    time::Duration,
+    sync::{Arc, Mutex, mpsc::channel},
+    time::{Duration, Instant},
 };
-use winit::{
-    event::{Event, StartCause, WindowEvent},
+use tao::{
+    event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
+    dpi::LogicalSize,
 };
-use wry::WebView;
-use std::sync::mpsc::{channel, Sender, Receiver};
-use tracing::{debug, error, info};
+use wry::{WebView, WebViewBuilder};
+use tracing::{debug, info};
 
 use crate::{
     event::{BrowserEvent, EventSystem},
     browser::{
         tabs::TabManager,
-        tab_ui::TabBar,
+        tab_ui::{TabBar, TabCommand},
         replay::{EventRecorder, EventPlayer},
         event_viewer::EventViewer,
     },
