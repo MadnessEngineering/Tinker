@@ -14,6 +14,8 @@ pub enum BrowserEvent {
     PageLoaded { url: String },
     TitleChanged { title: String },
     Error { message: String },
+    TabTitleChanged { id: usize, title: String },
+    TabUrlChanged { id: usize, url: String },
 }
 
 pub struct EventSystem {
@@ -85,6 +87,8 @@ impl EventSystem {
                 BrowserEvent::PageLoaded { .. } => "browser/page/loaded",
                 BrowserEvent::TitleChanged { .. } => "browser/page/title",
                 BrowserEvent::Error { .. } => "browser/error",
+                BrowserEvent::TabTitleChanged { .. } => "browser/tabs/title",
+                BrowserEvent::TabUrlChanged { .. } => "browser/tabs/url",
             };
 
             let payload = serde_json::to_string(&event)?;

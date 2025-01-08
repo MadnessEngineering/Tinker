@@ -274,6 +274,59 @@ impl BrowserEngine {
         
         Ok(())
     }
+
+    pub fn update_tab_title(&mut self, id: usize, title: String) -> Result<(), Box<dyn std::error::Error>> {
+        if self.tabs.update_tab_title(id, title.clone()) {
+            // Update tab UI
+            if let Some(tab_bar) = &self.tab_bar {
+                if let Some(tab) = self.tabs.get_active_tab() {
+                    tab_bar.update_tab(id, &title, &tab.url);
+                }
+            }
+            
+            if let Some(events) = &self.events {
+                if let Ok(mut events) = events.lock() {
+                    events.publish(BrowserEvent::TabTitleChanged { id, title: title.clone() })?;
+                }
+            }
+
+            // Add to event viewer
+            self.event_viewer.add_event(BrowserEvent::TabTitleChanged { id, title });
+        }
+        
+        Ok(())
+    }
+
+    pub fn update_tab_url(&mut self, id: usize, url: String) -> Result<(), Box<dyn std::error::Error>> {
+        if self.tabs.update_tab_url(id, url.clone()) {
+            // Update tab UI
+            if let Some(tab_bar) = &self.tab_bar {
+                if let Some(tab) = self.tabs.get_active_tab() {
+                    tab_bar.update_tab(id, &tab.title, &url);
+                }
+            }
+
+            // Update content view if this is the active tab
+            if let Some(content_view) = &self.content_view {
+                if let Some(tab) = self.tabs.get_active_tab() {
+                    if tab.id == id {
+                        content_view.load_url(&url);
+                    }
+                }
+            }
+            
+            if let Some(events) = &self.events {
+                if let Ok(mut events) = events.lock() {
+                    events.publish(BrowserEvent::TabUrlChanged { id, url: url.clone() })?;
+                }
+            }
+
+            // Add to event viewer
+            self.event_viewer.add_event(BrowserEvent::TabUrlChanged { id, url });
+        }
+        
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -163,4 +163,32 @@ mod tests {
         // Cannot close non-existent tab
         assert!(!manager.close_tab(999));
     }
+
+    #[test]
+    fn test_tab_title_update() {
+        let mut manager = TabManager::new();
+        let id = manager.create_tab("https://example.com".to_string());
+        
+        assert!(manager.update_tab_title(id, "New Title".to_string()));
+        if let Some(tab) = manager.tabs.get(&id) {
+            assert_eq!(tab.title, "New Title");
+        }
+        
+        // Test updating non-existent tab
+        assert!(!manager.update_tab_title(999, "Invalid".to_string()));
+    }
+
+    #[test]
+    fn test_tab_url_update() {
+        let mut manager = TabManager::new();
+        let id = manager.create_tab("https://example.com".to_string());
+        
+        assert!(manager.update_tab_url(id, "https://new-example.com".to_string()));
+        if let Some(tab) = manager.tabs.get(&id) {
+            assert_eq!(tab.url, "https://new-example.com");
+        }
+        
+        // Test updating non-existent tab
+        assert!(!manager.update_tab_url(999, "https://invalid.com".to_string()));
+    }
 } 
