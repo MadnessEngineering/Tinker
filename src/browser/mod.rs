@@ -162,15 +162,26 @@ impl BrowserEngine {
         let window = Arc::new(window);
         self.window = Some(window.clone());
 
-        // Create the content view
-        if let Ok(tabs) = self.tabs.lock() {
-            if let Some(active_tab) = tabs.get_active_tab() {
-                let content_view = WebViewBuilder::new(&window)
-                    .with_url(&active_tab.url)?
-                    .build()?;
-                self.content_view = Some(Arc::new(Mutex::new(content_view)));
+        // Create initial tab if none exists
+        if let Ok(mut tabs) = self.tabs.lock() {
+            if tabs.get_all_tabs().is_empty() {
+                tabs.create_tab("about:blank".to_string());
             }
         }
+
+        // Create the content view
+        let content_view = WebViewBuilder::new(&window)
+            .with_url("about:blank")
+            .map_err(|e| {
+                error!("Failed to set initial WebView URL: {}", e);
+                Box::new(e) as Box<dyn std::error::Error>
+            })
+            .and_then(|builder| builder.build()
+                .map_err(|e| {
+                    error!("Failed to build initial WebView: {}", e);
+                    Box::new(e) as Box<dyn std::error::Error>
+                }))?;
+        self.content_view = Some(Arc::new(Mutex::new(content_view)));
 
         // Create channels for browser commands
         let (cmd_tx, cmd_rx) = channel::<BrowserCommand>();
@@ -238,36 +249,41 @@ impl BrowserEngine {
                         if let Ok(mut tabs) = tabs.lock() {
                             let id = tabs.create_tab(url.clone());
                             info!("Created new tab {} with URL: {}", id, url);
+                            
+                            // Update tab UI
                             if let Some(ref bar) = tab_bar {
                                 bar.add_tab(id, "New Tab", &url);
                                 bar.set_active_tab(id);
                             }
+
                             // Create a new WebView for the tab
                             if let Some(window) = &window {
-                                let builder = WebViewBuilder::new(&**window);
-                                match builder.with_url(&url) {
-                                    Ok(builder) => {
-                                        match builder.build() {
-                                            Ok(new_view) => {
-                                                if let Some(ref view) = content_view {
-                                                    if let Ok(mut view_lock) = view.lock() {
-                                                        *view_lock = new_view;
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                error!("Failed to build WebView: {}", e);
+                                if let Err(e) = WebViewBuilder::new(&**window)
+                                    .with_url(&url)
+                                    .map_err(|e| {
+                                        error!("Failed to set WebView URL: {}", e);
+                                        e
+                                    })
+                                    .and_then(|builder| builder.build().map_err(|e| {
+                                        error!("Failed to build WebView: {}", e);
+                                        e
+                                    }))
+                                    .map(|new_view| {
+                                        if let Some(ref view) = content_view {
+                                            if let Ok(mut view_lock) = view.lock() {
+                                                *view_lock = new_view;
                                             }
                                         }
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to set WebView URL: {}", e);
-                                    }
+                                    }) {
+                                    error!("Failed to create WebView: {}", e);
                                 }
                             }
+
+                            // Publish event
                             if let Some(events) = &events {
                                 if let Ok(mut events) = events.lock() {
                                     let _ = events.publish(BrowserEvent::TabCreated { id });
+                                    let _ = events.publish(BrowserEvent::TabUrlChanged { id, url: url.clone() });
                                 }
                             }
                         }
