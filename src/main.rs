@@ -12,7 +12,11 @@ use crate::{
     event::EventSystem,
 };
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
+#[command(name = "tinker")]
+#[command(author = "Cursor")]
+#[command(version = "0.1.0")]
+#[command(about = "A craftsperson's browser", long_about = None)]
 struct Args {
     /// URL to load
     #[arg(long)]
@@ -83,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start recording if enabled
     if args.record {
         if let Some(path) = args.record_path {
-            browser.start_recording();
+            browser.start_recording(&path);
             info!("Recording will be saved to {}", path);
         } else {
             error!("--record-path is required when using --record");
@@ -102,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             browser.set_replay_speed(speed);
         }
         browser.start_replay();
-        info!("Started replay from {}", path);
+        info!("Replaying events from {}", path);
     }
 
     // Run the browser

@@ -104,10 +104,11 @@ impl BrowserEngine {
         Ok(())
     }
 
-    pub fn start_recording(&mut self) {
+    pub fn start_recording(&mut self, path: &str) {
         if let Ok(mut recorder) = self.recorder.lock() {
-            recorder.set_save_path("test_recording.json".to_string());
+            recorder.set_save_path(path.to_string());
             recorder.start();
+            info!("Started recording to {}", path);
         }
     }
 

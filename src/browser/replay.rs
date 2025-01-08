@@ -15,13 +15,18 @@ impl EventRecorder {
     pub fn start(&mut self) {
         self.recording = true;
         self.start_time = Some(Instant::now());
+        if let Some(path) = &self.save_path {
+            if let Err(e) = self.save(path) {
+                eprintln!("Failed to save initial recording: {}", e);
+            }
+        }
     }
 
     pub fn stop(&mut self) {
         self.recording = false;
         if let Some(path) = &self.save_path {
             if let Err(e) = self.save(path) {
-                eprintln!("Failed to save recording: {}", e);
+                eprintln!("Failed to save final recording: {}", e);
             }
         }
     }
@@ -44,7 +49,11 @@ impl EventRecorder {
     }
 
     pub fn set_save_path(&mut self, path: String) {
+        let path_clone = path.clone();
         self.save_path = Some(path);
+        if let Err(e) = self.save(&path_clone) {
+            eprintln!("Failed to save initial recording: {}", e);
+        }
     }
 }
 
