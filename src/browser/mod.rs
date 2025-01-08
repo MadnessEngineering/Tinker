@@ -184,6 +184,8 @@ impl BrowserEngine {
                 error!("Failed to build initial WebView: {}", e);
                 Box::new(e) as Box<dyn std::error::Error>
             })?;
+
+        // Store the content view
         self.content_view = Some(Arc::new(Mutex::new(content_view)));
 
         // Create channels for browser commands
@@ -261,6 +263,7 @@ impl BrowserEngine {
 
                             // Create a new WebView for the tab
                             if let Some(window) = &window {
+                                // Create and attach the new WebView
                                 match WebViewBuilder::new(&**window)
                                     .with_url(&url)
                                     .map_err(|e| {
@@ -327,9 +330,33 @@ impl BrowserEngine {
                                     bar.set_active_tab(id);
                                 }
                                 if let Some(active_tab) = tabs.get_active_tab() {
-                                    if let Some(ref view) = content_view {
-                                        if let Ok(view) = view.lock() {
-                                            view.load_url(&active_tab.url);
+                                    if let Some(window) = &window {
+                                        // Create and attach new WebView for the active tab
+                                        match WebViewBuilder::new(&**window)
+                                            .with_url(&active_tab.url)
+                                            .map_err(|e| {
+                                                error!("Failed to set WebView URL: {}", e);
+                                                e
+                                            })
+                                            .map(|builder| {
+                                                builder
+                                                    .with_initialization_script("window.addEventListener('DOMContentLoaded', () => { document.body.style.backgroundColor = '#ffffff'; });")
+                                                    .with_transparent(false)
+                                                    .with_visible(true)
+                                                    .build()
+                                            })
+                                            .and_then(|result| result.map_err(|e| {
+                                                error!("Failed to build WebView: {}", e);
+                                                e
+                                            })) {
+                                            Ok(new_view) => {
+                                                if let Some(ref view) = content_view {
+                                                    if let Ok(mut view_lock) = view.lock() {
+                                                        *view_lock = new_view;
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => error!("Failed to create WebView: {}", e)
                                         }
                                     }
                                 }
