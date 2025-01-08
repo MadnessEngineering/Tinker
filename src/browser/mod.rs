@@ -1,17 +1,28 @@
 //! Browser engine implementation
 
-use tao::{
+use std::{
+    error::Error as StdError,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use winit::{
     event::{Event, StartCause, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
-    dpi::LogicalSize,
 };
-use wry::{WebView, WebViewBuilder};
-use tracing::debug;
-use crate::event::{EventSystem, BrowserEvent};
-use std::sync::{Arc, Mutex};
+use wry::WebView;
 use std::sync::mpsc::{channel, Sender, Receiver};
-use std::time::{Instant, Duration};
+use tracing::{debug, error, info};
+
+use crate::{
+    event::{BrowserEvent, EventSystem},
+    browser::{
+        tabs::TabManager,
+        tab_ui::TabBar,
+        replay::{EventRecorder, EventPlayer},
+        event_viewer::EventViewer,
+    },
+};
 
 mod tabs;
 mod event_viewer;
@@ -59,21 +70,29 @@ impl BrowserEngine {
     }
 
     pub fn navigate(&self, url: &str) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(view) = &self.content_view {
-            view.load_url(url);
-            if let Ok(mut tabs) = self.tabs.lock() {
-                if let Some(tab) = tabs.get_active_tab_mut() {
-                    tab.url = url.to_string();
-                }
-            }
-            if let Some(events) = &self.events {
-                if let Ok(mut events) = events.lock() {
-                    events.publish(BrowserEvent::Navigation {
-                        url: url.to_string(),
-                    })?;
-                }
+        info!("Navigating to: {}", url);
+
+        // Update the tab URL first
+        if let Ok(mut tabs) = self.tabs.lock() {
+            if let Some(tab) = tabs.get_active_tab_mut() {
+                tab.url = url.to_string();
             }
         }
+
+        // Then update the WebView
+        if let Some(view) = &self.content_view {
+            view.load_url(url);
+        }
+
+        // Finally, emit the navigation event
+        if let Some(events) = &self.events {
+            if let Ok(mut events) = events.lock() {
+                events.publish(BrowserEvent::Navigation {
+                    url: url.to_string(),
+                })?;
+            }
+        }
+
         Ok(())
     }
 
@@ -130,7 +149,7 @@ impl BrowserEngine {
         }
     }
 
-    pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
         debug!("Starting browser engine...");
 
         let event_loop = EventLoop::new();
@@ -192,10 +211,14 @@ impl BrowserEngine {
         let recorder = self.recorder.clone();
         let event_viewer = self.event_viewer.clone();
         let tabs = self.tabs.clone();
+        let tab_bar = self.tab_bar.clone();
         let mut last_replay_time = Instant::now();
         
         // Store command sender for use in event loop
         let cmd_tx_for_events = cmd_tx.clone();
+
+        // Move content_view into the event loop
+        let content_view = self.content_view.take();
 
         event_loop.run(move |event, _, control_flow| {
             *control_flow = if headless {
@@ -239,18 +262,18 @@ impl BrowserEngine {
             while let Ok(cmd) = cmd_rx.try_recv() {
                 match cmd {
                     BrowserCommand::Navigate { url } => {
-                        if let Some(view) = &self.content_view {
+                        if let Some(ref view) = content_view {
                             view.load_url(&url);
                         }
                     }
                     BrowserCommand::CreateTab { url } => {
                         if let Ok(mut tabs) = tabs.lock() {
                             let id = tabs.create_tab(url.clone());
-                            if let Some(bar) = &self.tab_bar {
+                            if let Some(ref bar) = tab_bar {
                                 bar.add_tab(id, "New Tab", &url);
                                 bar.set_active_tab(id);
                             }
-                            if let Some(view) = &self.content_view {
+                            if let Some(ref view) = content_view {
                                 view.load_url(&url);
                             }
                             if let Some(events) = &events {
@@ -263,11 +286,11 @@ impl BrowserEngine {
                     BrowserCommand::CloseTab { id } => {
                         if let Ok(mut tabs) = tabs.lock() {
                             if tabs.close_tab(id) {
-                                if let Some(bar) = &self.tab_bar {
+                                if let Some(ref bar) = tab_bar {
                                     bar.remove_tab(id);
                                     if let Some(active_tab) = tabs.get_active_tab() {
                                         bar.set_active_tab(active_tab.id);
-                                        if let Some(view) = &self.content_view {
+                                        if let Some(ref view) = content_view {
                                             view.load_url(&active_tab.url);
                                         }
                                     }
@@ -283,11 +306,11 @@ impl BrowserEngine {
                     BrowserCommand::SwitchTab { id } => {
                         if let Ok(mut tabs) = tabs.lock() {
                             if tabs.switch_to_tab(id) {
-                                if let Some(bar) = &self.tab_bar {
+                                if let Some(ref bar) = tab_bar {
                                     bar.set_active_tab(id);
                                 }
                                 if let Some(active_tab) = tabs.get_active_tab() {
-                                    if let Some(view) = &self.content_view {
+                                    if let Some(ref view) = content_view {
                                         view.load_url(&active_tab.url);
                                     }
                                 }
@@ -310,14 +333,14 @@ impl BrowserEngine {
                     BrowserCommand::PlayEvent { event } => {
                         match &event {
                             BrowserEvent::Navigation { url } => {
-                                if let Some(view) = &self.content_view {
+                                if let Some(ref view) = content_view {
                                     view.load_url(url);
                                 }
                             }
                             BrowserEvent::TabCreated { .. } => {
                                 if let Ok(mut tabs) = tabs.lock() {
                                     let id = tabs.create_tab("about:blank".to_string());
-                                    if let Some(bar) = &self.tab_bar {
+                                    if let Some(ref bar) = tab_bar {
                                         bar.add_tab(id, "New Tab", "about:blank");
                                         bar.set_active_tab(id);
                                     }
@@ -326,7 +349,7 @@ impl BrowserEngine {
                             BrowserEvent::TabClosed { id } => {
                                 if let Ok(mut tabs) = tabs.lock() {
                                     if tabs.close_tab(*id) {
-                                        if let Some(bar) = &self.tab_bar {
+                                        if let Some(ref bar) = tab_bar {
                                             bar.remove_tab(*id);
                                         }
                                     }
@@ -335,7 +358,7 @@ impl BrowserEngine {
                             BrowserEvent::TabSwitched { id } => {
                                 if let Ok(mut tabs) = tabs.lock() {
                                     if tabs.switch_to_tab(*id) {
-                                        if let Some(bar) = &self.tab_bar {
+                                        if let Some(ref bar) = tab_bar {
                                             bar.set_active_tab(*id);
                                         }
                                     }
@@ -361,6 +384,15 @@ impl BrowserEngine {
         #[allow(unreachable_code)]
         Ok(())
     }
+
+    pub fn create_tab(&mut self, url: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if let Ok(mut tabs) = self.tabs.lock() {
+            tabs.create_tab(url.to_string());
+            Ok(())
+        } else {
+            Err("Failed to lock tabs".into())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -370,7 +402,23 @@ mod tests {
     #[test]
     fn test_browser_navigation() {
         let mut browser = BrowserEngine::new(false, None);
+        
+        // Create initial tab and get its URL
+        let initial_url = {
+            let mut tabs = browser.tabs.lock().unwrap();
+            let id = tabs.create_tab("about:blank".to_string());
+            tabs.get_active_tab().map(|tab| tab.url.clone()).unwrap()
+        };
+        assert_eq!(initial_url, "about:blank");
+
+        // Navigate to the test URL
         browser.navigate("https://www.example.com").unwrap();
-        assert_eq!(browser.get_active_tab(), Some("https://www.example.com".to_string()));
+
+        // Verify the URL was updated
+        let final_url = {
+            let tabs = browser.tabs.lock().unwrap();
+            tabs.get_active_tab().map(|tab| tab.url.clone()).unwrap()
+        };
+        assert_eq!(final_url, "https://www.example.com");
     }
 }

@@ -27,14 +27,7 @@ impl TabBar {
         let webview = WebViewBuilder::new(window)
             .with_html(TAB_BAR_HTML)?
             .with_initialization_script(TAB_BAR_JS)
-            .with_ipc_handler(move |value| {
-                let msg = if let Some(s) = value.as_str() {
-                    s
-                } else {
-                    debug!("Invalid IPC message format: {:?}", value);
-                    return;
-                };
-
+            .with_ipc_handler(move |msg: String| {
                 match msg.split_once(':') {
                     Some(("TabCreated", url)) => {
                         let url = url.trim()
@@ -58,7 +51,7 @@ impl TabBar {
                         }
                     }
                     _ => {
-                        debug!("Unknown IPC message: {:?}", value);
+                        debug!("Unknown IPC message format: {}", msg);
                     }
                 }
             })

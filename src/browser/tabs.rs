@@ -44,37 +44,45 @@ impl TabManager {
     }
 
     pub fn close_tab(&mut self, id: usize) -> bool {
-        // Cannot close a non-existent tab
-        if id >= self.tabs.len() {
-            debug!("Tab {} does not exist", id);
-            return false;
-        }
-
-        // Cannot close the last tab
-        if self.tabs.len() <= 1 {
-            debug!("Cannot close last tab");
-            return false;
-        }
-
-        // If we're closing the active tab, switch to another one first
-        if self.active_tab == Some(id) {
-            if let Some(other_id) = self.tabs.iter().position(|tab| tab.id != id) {
-                self.active_tab = Some(other_id);
+        // Find the index of the tab with the given id
+        if let Some(index) = self.tabs.iter().position(|tab| tab.id == id) {
+            // Cannot close the last tab
+            if self.tabs.len() == 1 {
+                debug!("Cannot close the last tab");
+                return false;
             }
-        }
 
-        // Remove the tab
-        self.tabs.remove(id);
-        debug!("Closed tab: {}", id);
-        true
+            // If we're closing the active tab, switch to another one first
+            if self.active_tab == Some(index) {
+                let new_active = if index == 0 { 1 } else { index - 1 };
+                self.active_tab = Some(new_active);
+            }
+
+            // Remove the tab
+            self.tabs.remove(index);
+
+            // Update active tab index if it's after the removed tab
+            if let Some(active) = self.active_tab {
+                if active > index {
+                    self.active_tab = Some(active - 1);
+                }
+            }
+
+            debug!("Closed tab: {}", id);
+            true
+        } else {
+            debug!("Tab {} does not exist", id);
+            false
+        }
     }
 
     pub fn switch_to_tab(&mut self, id: usize) -> bool {
-        if id < self.tabs.len() {
-            self.active_tab = Some(id);
+        if let Some(index) = self.tabs.iter().position(|tab| tab.id == id) {
+            self.active_tab = Some(index);
             debug!("Switched to tab: {}", id);
             true
         } else {
+            debug!("Tab {} does not exist", id);
             false
         }
     }
