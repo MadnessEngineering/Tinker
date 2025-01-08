@@ -8,7 +8,7 @@ use tao::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::{WindowBuilder, Window},
-    dpi::LogicalSize,
+    dpi::{LogicalSize, PhysicalSize},
 };
 use wry::{WebView, WebViewBuilder};
 use tracing::{debug, info, error};
@@ -156,9 +156,12 @@ impl BrowserEngine {
 
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let event_loop = EventLoop::new();
+        
+        // Create the main window with decorations
         let window = Arc::new(WindowBuilder::new()
             .with_title("Tinker Browser")
             .with_inner_size(LogicalSize::new(1024.0, 768.0))
+            .with_decorations(true)  // Enable window decorations
             .build(&event_loop)?);
 
         // Set up command channels
@@ -173,6 +176,29 @@ impl BrowserEngine {
         self.window = Some(window.clone());
         self.cmd_tx = Some(browser_cmd_tx.clone());
 
+        // Create the tab bar first if not in headless mode
+        let tab_bar_height = if !self.headless {
+            let tab_cmd_tx = browser_cmd_tx.clone();
+            let tab_bar = TabBar::new(&window, move |cmd| {
+                match cmd {
+                    TabCommand::Create { url } => {
+                        let _ = tab_cmd_tx.send(BrowserCommand::CreateTab { url });
+                    }
+                    TabCommand::Close { id } => {
+                        let _ = tab_cmd_tx.send(BrowserCommand::CloseTab { id });
+                    }
+                    TabCommand::Switch { id } => {
+                        let _ = tab_cmd_tx.send(BrowserCommand::SwitchTab { id });
+                    }
+                }
+            })?;
+
+            self.tab_bar = Some(tab_bar);
+            40 // Tab bar height
+        } else {
+            0
+        };
+
         // Create initial tab if none exists
         if let Ok(mut tabs) = self.tabs.lock() {
             if tabs.get_all_tabs().is_empty() {
@@ -181,7 +207,6 @@ impl BrowserEngine {
 
                 // Create the initial WebView
                 let window_size = window.inner_size();
-                let tab_bar_height: u32 = 40; // Height of the tab bar
                 let content_view = WebViewBuilder::new(&window)
                     .with_url(default_url)
                     .map_err(|e| {
@@ -209,37 +234,13 @@ impl BrowserEngine {
                 // Store the WebView in both the tab and as current content view
                 tabs.set_tab_webview(id, content_view.clone());
                 self.content_view = Some(content_view);
-            }
-        }
 
-        // Create the tab bar if not in headless mode
-        if !self.headless {
-            // Create the tab bar with the command sender
-            let tab_cmd_tx = browser_cmd_tx.clone();
-            let tab_bar = TabBar::new(&window, move |cmd| {
-                match cmd {
-                    TabCommand::Create { url } => {
-                        let _ = tab_cmd_tx.send(BrowserCommand::CreateTab { url });
-                    }
-                    TabCommand::Close { id } => {
-                        let _ = tab_cmd_tx.send(BrowserCommand::CloseTab { id });
-                    }
-                    TabCommand::Switch { id } => {
-                        let _ = tab_cmd_tx.send(BrowserCommand::SwitchTab { id });
-                    }
-                }
-            })?;
-
-            // Add existing tabs to the UI
-            if let Ok(tabs) = self.tabs.lock() {
-                for tab in tabs.get_all_tabs() {
-                    tab_bar.add_tab(tab.id, &tab.title, &tab.url);
-                }
-                if let Some(active_tab) = tabs.get_active_tab() {
-                    tab_bar.set_active_tab(active_tab.id);
+                // Add the tab to the UI
+                if let Some(ref tab_bar) = self.tab_bar {
+                    tab_bar.add_tab(id, "New Tab", default_url);
+                    tab_bar.set_active_tab(id);
                 }
             }
-            self.tab_bar = Some(tab_bar);
         }
 
         // Set up event handling
@@ -252,7 +253,9 @@ impl BrowserEngine {
         let window = self.window.take();
         let content_view = self.content_view.clone();
         let engine = Arc::new(Mutex::new(self.clone()));
+        let tab_bar_height = tab_bar_height;
 
+        // Handle window resize events to adjust WebView sizes
         event_loop.run(move |event, _, control_flow| {
             *control_flow = if headless {
                 ControlFlow::Exit
@@ -260,16 +263,47 @@ impl BrowserEngine {
                 ControlFlow::Wait
             };
 
+            match event {
+                Event::WindowEvent {
+                    event: WindowEvent::Resized(new_size),
+                    ..
+                } => {
+                    // Resize the tab bar
+                    if let Some(ref bar) = tab_bar {
+                        if let Ok(container) = bar.container.lock() {
+                            container.set_bounds(wry::Rect {
+                                x: 0,
+                                y: 0,
+                                width: new_size.width,
+                                height: tab_bar_height,
+                            });
+                        }
+                    }
+
+                    // Resize the content view
+                    if let Some(ref view) = content_view {
+                        if let Ok(view) = view.lock() {
+                            view.set_bounds(wry::Rect {
+                                x: 0,
+                                y: tab_bar_height as i32,
+                                width: new_size.width,
+                                height: new_size.height.saturating_sub(tab_bar_height),
+                            });
+                        }
+                    }
+                }
+                Event::WindowEvent {
+                    event: WindowEvent::CloseRequested,
+                    ..
+                } => {
+                    *control_flow = ControlFlow::Exit;
+                }
+                _ => (),
+            }
+
             // Handle browser commands
             while let Ok(cmd) = browser_cmd_rx.try_recv() {
                 match cmd {
-                    BrowserCommand::Navigate { url } => {
-                        if let Some(ref view) = content_view {
-                            if let Ok(view) = view.lock() {
-                                view.load_url(&url);
-                            }
-                        }
-                    }
                     BrowserCommand::CreateTab { url } => {
                         if let Ok(mut tabs) = tabs.lock() {
                             let id = tabs.create_tab(url.clone());
@@ -284,7 +318,6 @@ impl BrowserEngine {
                             // Create a new WebView for the tab
                             if let Some(window) = &window {
                                 let window_size = window.inner_size();
-                                let tab_bar_height: u32 = 40; // Height of the tab bar
                                 match WebViewBuilder::new(&**window)
                                     .with_url(&url)
                                     .map_err(|e| {
@@ -321,6 +354,13 @@ impl BrowserEngine {
                                     }
                                     Err(e) => error!("Failed to create WebView: {}", e)
                                 }
+                            }
+                        }
+                    }
+                    BrowserCommand::Navigate { url } => {
+                        if let Some(ref view) = content_view {
+                            if let Ok(view) = view.lock() {
+                                view.load_url(&url);
                             }
                         }
                     }
@@ -364,16 +404,6 @@ impl BrowserEngine {
                 if let Ok(mut engine) = engine.lock() {
                     engine.handle_menu_command(cmd);
                 }
-            }
-
-            match event {
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
-                    *control_flow = ControlFlow::Exit;
-                }
-                _ => (),
             }
         });
 
