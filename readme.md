@@ -50,6 +50,9 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
 - 🚀 Added async operations support for API server and event system
 - 🛡️ Implemented comprehensive error handling throughout the system
 - 🧪 Added extensive test coverage for core functionality
+- 📝 Added event recording and replay functionality
+- 🎯 Implemented CLI interface with version support and descriptive help
+- 🔧 Fixed test suite issues and improved test reliability
 
 ## Engineering Roadmap
 
@@ -66,8 +69,8 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
   - [x] Design Event Blueprints
   - [x] Engineer Data Patterns
   - [x] Build Capture Mechanisms
-  - [ ] Craft Replay Tools
-  - [ ] Install Signal Filters
+  - [x] Craft Replay Tools
+  - [x] Install Signal Filters
 
 - [ ] Control Panel Construction
   - [x] Forge API Control Points
