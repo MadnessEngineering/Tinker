@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 wry = { version = "0.35", features = ["transparent"] }
-tao = { version = "0.25", features = ["rwh_05", "menu", "serde"] }
+tao = { version = "0.25", features = ["rwh_05"] }
 raw-window-handle = "0.5.2"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
