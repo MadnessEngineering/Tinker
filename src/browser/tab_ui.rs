@@ -2,7 +2,7 @@ use wry::{WebView, WebViewBuilder};
 use tao::window::Window;
 use tracing::debug;
 use std::sync::{Arc, Mutex};
-use crate::templates::{TAB_BAR_HTML, TAB_BAR_JS};
+use crate::templates::{get_tab_bar_html, TAB_BAR_JS};
 use serde_json;
 
 pub enum TabCommand {
@@ -27,8 +27,7 @@ impl TabBar {
 
         // Create a WebView specifically for the tab bar UI
         let webview = WebViewBuilder::new(window)
-            .with_html(TAB_BAR_HTML)?
-            .with_initialization_script(TAB_BAR_JS)
+            .with_html(&get_tab_bar_html())?
             .with_bounds(wry::Rect {
                 x: 0,
                 y: 0,
