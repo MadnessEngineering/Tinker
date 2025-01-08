@@ -213,7 +213,10 @@ impl BrowserEngine {
                         error!("Failed to set initial WebView URL: {}", e);
                         Box::new(e) as Box<dyn std::error::Error>
                     })?
-                    .with_initialization_script("window.addEventListener('DOMContentLoaded', () => { document.body.style.backgroundColor = '#ffffff'; });")
+                    .with_initialization_script("
+                        document.documentElement.style.background = '#ffffff';
+                        document.body.style.background = '#ffffff';
+                    ")
                     .with_transparent(false)
                     .with_visible(true)
                     .with_bounds(wry::Rect {
@@ -326,7 +329,10 @@ impl BrowserEngine {
                                     })
                                     .map(|builder| {
                                         builder
-                                            .with_initialization_script("window.addEventListener('DOMContentLoaded', () => { document.body.style.backgroundColor = '#ffffff'; });")
+                                            .with_initialization_script("
+                                                document.documentElement.style.background = '#ffffff';
+                                                document.body.style.background = '#ffffff';
+                                            ")
                                             .with_transparent(false)
                                             .with_visible(true)
                                             .with_bounds(wry::Rect {

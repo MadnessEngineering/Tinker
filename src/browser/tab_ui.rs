@@ -34,8 +34,9 @@ impl TabBar {
                 width: window_size.width,
                 height,
             })
-            .with_transparent(true)
+            .with_transparent(false)
             .with_visible(true)
+            .with_initialization_script("document.documentElement.style.background = '#24292e';")
             .with_ipc_handler(move |msg: String| {
                 debug!("Received IPC message: {}", msg);
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&msg) {
