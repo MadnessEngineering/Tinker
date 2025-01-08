@@ -1,6 +1,8 @@
 use wry::{WebView, WebViewBuilder};
 use tao::window::Window;
 use tracing::debug;
+use std::sync::{Arc, Mutex};
+use crate::templates::{TAB_BAR_HTML, TAB_BAR_JS};
 
 pub enum TabCommand {
     Create { url: String },
@@ -8,8 +10,9 @@ pub enum TabCommand {
     Switch { id: usize },
 }
 
+#[derive(Clone)]
 pub struct TabBar {
-    container: WebView,
+    container: Arc<Mutex<WebView>>,
     height: u32,
 }
 
@@ -21,80 +24,75 @@ impl TabBar {
         let height = 40; // Height of the tab bar in pixels
         
         // Create a WebView for the tab bar with custom HTML/CSS
-        let container = WebViewBuilder::new(window)
-            .with_html(include_str!("../templates/tab_bar.html"))?
-            .with_initialization_script(include_str!("../templates/tab_bar.js"))
-            .with_ipc_handler(move |msg: String| {
-                debug!("Received IPC message: {}", msg);
-                // Handle IPC messages from the tab bar UI
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&msg) {
-                    if let Some(msg_type) = value.get("type").and_then(|t| t.as_str()) {
-                        debug!("Processing message type: {}", msg_type);
-                        match msg_type {
-                            "TabCreated" => {
-                                let url = value.get("url")
-                                    .and_then(|u| u.as_str())
-                                    .unwrap_or("about:blank")
-                                    .to_string();
-                                debug!("Creating new tab with URL: {}", url);
-                                command_handler(TabCommand::Create { url });
-                            }
-                            "TabClosed" => {
-                                if let Some(id) = value.get("id").and_then(|i| i.as_u64()) {
-                                    debug!("Closing tab with ID: {}", id);
-                                    command_handler(TabCommand::Close { id: id as usize });
-                                }
-                            }
-                            "TabSwitched" => {
-                                if let Some(id) = value.get("id").and_then(|i| i.as_u64()) {
-                                    debug!("Switching to tab with ID: {}", id);
-                                    command_handler(TabCommand::Switch { id: id as usize });
-                                }
-                            }
-                            _ => {
-                                debug!("Unknown message type: {}", msg_type);
-                            }
+        let webview = WebViewBuilder::new(window)
+            .with_html(TAB_BAR_HTML)?
+            .with_initialization_script(TAB_BAR_JS)
+            .with_ipc_handler(move |value| {
+                let msg = if let Some(s) = value.as_str() {
+                    s
+                } else {
+                    debug!("Invalid IPC message format: {:?}", value);
+                    return;
+                };
+
+                match msg.split_once(':') {
+                    Some(("TabCreated", url)) => {
+                        let url = url.trim()
+                            .strip_prefix('"')
+                            .and_then(|s| s.strip_suffix('"'))
+                            .unwrap_or("about:blank")
+                            .to_string();
+                        debug!("Creating new tab with URL: {}", url);
+                        command_handler(TabCommand::Create { url });
+                    }
+                    Some(("TabClosed", id)) => {
+                        if let Ok(id) = id.trim().parse::<usize>() {
+                            debug!("Closing tab with ID: {}", id);
+                            command_handler(TabCommand::Close { id });
                         }
                     }
-                } else {
-                    debug!("Failed to parse IPC message as JSON: {}", msg);
+                    Some(("TabSwitched", id)) => {
+                        if let Ok(id) = id.trim().parse::<usize>() {
+                            debug!("Switching to tab with ID: {}", id);
+                            command_handler(TabCommand::Switch { id });
+                        }
+                    }
+                    _ => {
+                        debug!("Unknown IPC message: {:?}", value);
+                    }
                 }
             })
             .build()?;
 
         Ok(TabBar {
-            container,
+            container: Arc::new(Mutex::new(webview)),
             height,
         })
-    }
-
-    pub fn update_tab(&self, id: usize, title: &str, url: &str) {
-        let script = format!(
-            "updateTab({}, '{}', '{}');",
-            id,
-            title.replace("'", "\\'"),
-            url.replace("'", "\\'")
-        );
-        let _ = self.container.evaluate_script(&script);
     }
 
     pub fn add_tab(&self, id: usize, title: &str, url: &str) {
         let script = format!(
             "addTab({}, '{}', '{}');",
             id,
-            title.replace("'", "\\'"),
-            url.replace("'", "\\'")
+            title.replace('\'', "\\'"),
+            url.replace('\'', "\\'")
         );
-        let _ = self.container.evaluate_script(&script);
+        if let Ok(container) = self.container.lock() {
+            let _ = container.evaluate_script(&script);
+        }
     }
 
     pub fn remove_tab(&self, id: usize) {
         let script = format!("removeTab({});", id);
-        let _ = self.container.evaluate_script(&script);
+        if let Ok(container) = self.container.lock() {
+            let _ = container.evaluate_script(&script);
+        }
     }
 
     pub fn set_active_tab(&self, id: usize) {
         let script = format!("setActiveTab({});", id);
-        let _ = self.container.evaluate_script(&script);
+        if let Ok(container) = self.container.lock() {
+            let _ = container.evaluate_script(&script);
+        }
     }
 } 

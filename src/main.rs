@@ -1,34 +1,27 @@
-use tracing::{debug, Level};
-use tracing_subscriber::FmtSubscriber;
 use clap::Parser;
-use tokio;
+use tracing::{debug, error};
+use tracing_subscriber::FmtSubscriber;
+use std::sync::{Arc, Mutex};
+use crate::event::EventSystem;
 
-mod browser;
 mod api;
+mod browser;
 mod event;
+mod templates;
 
 use browser::BrowserEngine;
 
+/// Tinker Browser - A browser built for testing
 #[derive(Parser, Debug)]
-#[command(
-    name = "tinker",
-    author = "Cursor",
-    version,
-    about = "A craftsperson's browser",
-    long_about = None
-)]
+#[command(author, version, about, long_about = None)]
 struct Args {
-    /// Run in headless mode without a visible window
-    #[arg(long)]
-    headless: bool,
-
-    /// URL to navigate to on startup
-    #[arg(long)]
+    /// URL to open on startup
+    #[arg(short, long)]
     url: Option<String>,
 
-    /// Number of tabs to open on startup
+    /// Run in headless mode
     #[arg(long)]
-    tabs: Option<usize>,
+    headless: bool,
 
     /// MQTT broker URL for events
     #[arg(long, default_value = "localhost")]
@@ -55,35 +48,35 @@ struct Args {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::DEBUG)
-        .try_init();
-
-    if let Err(_) = subscriber {
-        debug!("Logging already initialized");
-    }
+        .with_max_level(tracing::Level::DEBUG)
+        .with_target(false)
+        .with_thread_ids(true)
+        .with_file(true)
+        .with_line_number(true)
+        .pretty()
+        .init();
 
     let args = Args::parse();
-    debug!("Starting Tinker Workshop");
 
-    // Start API server in a separate task
-    tokio::spawn(async {
-        if let Err(e) = api::start_api_server().await {
-            debug!("API server error: {}", e);
+    // Initialize event system if MQTT broker is specified
+    let events = if !args.mqtt_broker.is_empty() {
+        let mut events = EventSystem::new(&args.mqtt_broker, "tinker-browser");
+        if let Err(e) = events.connect() {
+            error!("Failed to connect to MQTT broker: {}", e);
+            None
+        } else {
+            Some(Arc::new(Mutex::new(events)))
         }
-    });
+    } else {
+        None
+    };
 
-    let mut browser = BrowserEngine::new();
-    browser.set_headless(args.headless);
-    
-    // Initialize event system
-    if let Err(e) = browser.init_events(&args.mqtt_broker) {
-        debug!("Failed to initialize event system: {}", e);
-    }
+    // Create and initialize browser
+    let mut browser = BrowserEngine::new(args.headless, events);
     
     // Handle recording
-    let record_path = args.record_path.as_deref();
     if args.record {
-        if let Some(path) = record_path {
+        if let Some(path) = args.record_path.as_deref() {
             browser.start_recording();
             debug!("Recording will be saved to: {}", path);
         } else {
@@ -103,17 +96,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         browser.navigate(&url)?;
     }
 
-    if let Some(tabs) = args.tabs {
-        for _ in 1..tabs {
-            debug!("Created new tab");
-        }
-    }
-
+    // Run the browser
     browser.run()?;
 
     // Save recording if we were recording
     if args.record {
-        if let Some(path) = record_path {
+        if let Some(path) = args.record_path.as_deref() {
             browser.save_recording(path)?;
         }
     }
