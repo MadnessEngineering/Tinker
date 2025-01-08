@@ -19,14 +19,14 @@ mod tabs;
 mod event_viewer;
 mod tab_ui;
 mod replay;
-mod menu;
+mod menu_ui;
 
 use self::{
     tabs::TabManager,
     event_viewer::EventViewer,
     tab_ui::{TabBar, TabCommand},
     replay::{EventRecorder, EventPlayer},
-    menu::create_application_menu,
+    menu_ui::{MenuBar, MenuCommand},
 };
 
 #[derive(Debug)]
@@ -37,7 +37,7 @@ enum BrowserCommand {
     SwitchTab { id: usize },
     RecordEvent { event: BrowserEvent },
     PlayEvent { event: BrowserEvent },
-    Menu(menu::MenuCommand),
+    Menu(MenuCommand),
 }
 
 pub struct BrowserEngine {
@@ -48,8 +48,10 @@ pub struct BrowserEngine {
     event_viewer: Arc<Mutex<EventViewer>>,
     tabs: Arc<Mutex<TabManager>>,
     tab_bar: Option<TabBar>,
+    menu_bar: Option<MenuBar>,
     content_view: Option<Arc<Mutex<WebView>>>,
     window: Option<Arc<Window>>,
+    cmd_tx: Option<Sender<BrowserCommand>>,
 }
 
 impl BrowserEngine {
@@ -62,8 +64,10 @@ impl BrowserEngine {
             event_viewer: Arc::new(Mutex::new(EventViewer::default())),
             tabs: Arc::new(Mutex::new(TabManager::default())),
             tab_bar: None,
+            menu_bar: None,
             content_view: None,
             window: None,
+            cmd_tx: None,
         }
     }
 
@@ -167,16 +171,21 @@ impl BrowserEngine {
         // Create channels for browser commands
         let (cmd_tx, cmd_rx) = channel::<BrowserCommand>();
 
-        // Create and set the menu bar if not in headless mode
-        if !self.headless {
-            let menu_tx = cmd_tx.clone();
-            let menu = create_application_menu(&window, move |cmd| {
-                let _ = menu_tx.send(BrowserCommand::Menu(cmd));
-            });
-            window.set_menu(menu);
-        }
+        // Create the menu bar if not in headless mode
+        let menu_height = if !self.headless {
+            let menu_cmd_tx = cmd_tx.clone();
+            let menu_bar = MenuBar::new(&window, move |cmd| {
+                let _ = menu_cmd_tx.send(BrowserCommand::Menu(cmd));
+            })?;
+            let height = menu_bar.get_height();
+            self.menu_bar = Some(menu_bar);
+            height
+        } else {
+            0
+        };
 
         self.window = Some(window.clone());
+        self.cmd_tx = Some(cmd_tx);
 
         // Create initial tab if none exists
         if let Ok(mut tabs) = self.tabs.lock() {
@@ -461,8 +470,8 @@ impl BrowserEngine {
         }
     }
 
-    fn handle_menu_command(&mut self, cmd: menu::MenuCommand) {
-        use menu::MenuCommand::*;
+    fn handle_menu_command(&mut self, cmd: MenuCommand) {
+        use menu_ui::MenuCommand::*;
         match cmd {
             NewTab => {
                 let _ = self.create_tab("about:blank");
@@ -475,13 +484,15 @@ impl BrowserEngine {
                     if let Some(active_tab) = tabs.get_active_tab() {
                         let id = active_tab.id;
                         drop(tabs); // Release the lock before sending command
-                        let _ = self.cmd_tx.send(BrowserCommand::CloseTab { id });
+                        if let Some(cmd_tx) = &self.cmd_tx {
+                            let _ = cmd_tx.send(BrowserCommand::CloseTab { id });
+                        }
                     }
                 }
             }
             CloseWindow => {
                 if let Some(window) = &self.window {
-                    window.close();
+                    let _ = window.close();
                 }
             }
             ZoomIn => {
@@ -521,7 +532,7 @@ impl BrowserEngine {
                 debug!("Test report viewer not yet implemented");
             }
             SwitchEngine(engine) => {
-                debug!("Engine switching not yet implemented: {:?}", engine);
+                debug!("Engine switching not yet implemented: {}", engine);
             }
             OpenJsConsole => {
                 debug!("JavaScript console not yet implemented");

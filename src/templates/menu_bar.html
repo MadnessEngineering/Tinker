@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f0f0f0;
+            user-select: none;
+        }
+
+        #menu-bar {
+            display: flex;
+            height: 30px;
+            background: #f0f0f0;
+            border-bottom: 1px solid #ccc;
+            align-items: center;
+            padding: 0 8px;
+        }
+
+        .menu-item {
+            position: relative;
+            padding: 0 12px;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .menu-item:hover {
+            background: #e0e0e0;
+        }
+
+        .menu-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: #fff;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            display: none;
+            min-width: 200px;
+            z-index: 1000;
+        }
+
+        .menu-item:hover .menu-dropdown {
+            display: block;
+        }
+
+        .menu-option {
+            padding: 8px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .menu-option:hover {
+            background: #f5f5f5;
+        }
+
+        .menu-shortcut {
+            color: #666;
+            font-size: 0.9em;
+            margin-left: 16px;
+        }
+
+        .menu-separator {
+            height: 1px;
+            background: #ccc;
+            margin: 4px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="menu-bar">
+        <div class="menu-item">
+            File
+            <div class="menu-dropdown">
+                <div class="menu-option" onclick="sendMenuCommand('NewTab')">
+                    New Tab
+                    <span class="menu-shortcut">⌘T</span>
+                </div>
+                <div class="menu-option" onclick="sendMenuCommand('NewWindow')">
+                    New Window
+                    <span class="menu-shortcut">⌘N</span>
+                </div>
+                <div class="menu-separator"></div>
+                <div class="menu-option" onclick="sendMenuCommand('CloseTab')">
+                    Close Tab
+                    <span class="menu-shortcut">⌘W</span>
+                </div>
+                <div class="menu-option" onclick="sendMenuCommand('CloseWindow')">
+                    Close Window
+                    <span class="menu-shortcut">⌘⇧W</span>
+                </div>
+            </div>
+        </div>
+        <div class="menu-item">
+            View
+            <div class="menu-dropdown">
+                <div class="menu-option" onclick="sendMenuCommand('ZoomIn')">
+                    Zoom In
+                    <span class="menu-shortcut">⌘+</span>
+                </div>
+                <div class="menu-option" onclick="sendMenuCommand('ZoomOut')">
+                    Zoom Out
+                    <span class="menu-shortcut">⌘-</span>
+                </div>
+                <div class="menu-option" onclick="sendMenuCommand('ZoomReset')">
+                    Reset Zoom
+                    <span class="menu-shortcut">⌘0</span>
+                </div>
+                <div class="menu-separator"></div>
+                <div class="menu-option" onclick="sendMenuCommand('ToggleDevTools')">
+                    Developer Tools
+                    <span class="menu-shortcut">⌘⇧I</span>
+                </div>
+            </div>
+        </div>
+        <div class="menu-item">
+            Testing
+            <div class="menu-dropdown">
+                <div class="menu-option" onclick="sendMenuCommand('StartRecording')">Start Recording</div>
+                <div class="menu-option" onclick="sendMenuCommand('StopRecording')">Stop Recording</div>
+                <div class="menu-separator"></div>
+                <div class="menu-option" onclick="sendMenuCommand('RunTests')">Run Tests</div>
+                <div class="menu-option" onclick="sendMenuCommand('ViewTestReport')">View Report</div>
+            </div>
+        </div>
+        <div class="menu-item">
+            JavaScript
+            <div class="menu-dropdown">
+                <div class="menu-option" onclick="sendMenuCommand('SwitchEngine', 'V8')">V8 Engine</div>
+                <div class="menu-option" onclick="sendMenuCommand('SwitchEngine', 'SpiderMonkey')">SpiderMonkey</div>
+                <div class="menu-option" onclick="sendMenuCommand('SwitchEngine', 'JavaScriptCore')">JavaScriptCore</div>
+                <div class="menu-separator"></div>
+                <div class="menu-option" onclick="sendMenuCommand('OpenJsConsole')">Console</div>
+                <div class="menu-option" onclick="sendMenuCommand('OpenPerformanceMonitor')">Performance</div>
+            </div>
+        </div>
+        <div class="menu-item">
+            Help
+            <div class="menu-dropdown">
+                <div class="menu-option" onclick="sendMenuCommand('OpenDocumentation')">Documentation</div>
+                <div class="menu-option" onclick="sendMenuCommand('ReportIssue')">Report Issue</div>
+                <div class="menu-separator"></div>
+                <div class="menu-option" onclick="sendMenuCommand('About')">About Tinker</div>
+            </div>
+        </div>
+    </div>
+    <script>
+        function sendMenuCommand(command, param) {
+            window.ipc.postMessage(JSON.stringify({
+                type: 'MenuCommand',
+                command: command,
+                param: param
+            }));
+        }
+    </script>
+</body>
+</html> 

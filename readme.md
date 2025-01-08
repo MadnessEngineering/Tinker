@@ -53,24 +53,21 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
 - 📝 Added event recording and replay functionality
 - 🎯 Implemented CLI interface with version support and descriptive help
 - 🔧 Fixed test suite issues and improved test reliability
+- 🎨 Added custom HTML/CSS menu bar with full keyboard shortcut support
 
 ## Lessons Learned
 
 ### WebView Management
-- 🔍 WebViews must maintain a strong reference to their parent window to prevent disappearing
-- 🎯 Each tab should own its WebView instance rather than sharing a single one
-- 🔄 When switching tabs, load the URL in the existing WebView instead of creating a new one
-- 🖼️ WebView initialization requires proper display parameters:
-  - `with_visible(true)` to ensure visibility
-  - `with_transparent(false)` for proper background rendering
-  - Background color initialization to prevent blank displays
-- ⚠️ Creating new WebViews for each tab switch can cause flickering and state loss
-- 🏗️ WebView creation should happen once per tab, not on every tab switch
+- WebView instances should be owned by their respective tabs
+- Strong references to parent windows must be maintained
+- Proper display parameters are crucial for preventing frame issues
+- IPC handlers need careful error handling and type checking
 
-### Thread Safety
-- 🔒 WebView operations must be properly synchronized using Arc<Mutex<>>
-- 🧵 Event loop state must be carefully managed to prevent window/WebView drops
-- 🔄 Tab state changes should be atomic to prevent race conditions
+### Menu System Design
+- Native menu APIs can be inconsistent across platforms
+- HTML/CSS menus provide better control and consistency
+- WebView-based UI components need proper z-index management
+- Keyboard shortcuts should be handled at both UI and system levels
 
 ### JavaScript Engine Integration
 - 🎯 Primary Focus: V8 Engine Integration

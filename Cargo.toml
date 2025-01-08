@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wry = "0.35"
-tao = { version = "0.24", features = ["rwh_05"] }
+wry = { version = "0.35", features = ["transparent"] }
+tao = { version = "0.25", features = ["rwh_05", "menu", "serde"] }
 raw-window-handle = "0.5.2"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"

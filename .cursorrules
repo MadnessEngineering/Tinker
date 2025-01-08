@@ -1,0 +1,5 @@
+1. Work on the code problem asked, implementing it.
+2. Run any availble tests, such as cargo test where applicable, iterating on it until it builds.
+3. add a section to the readme called "lessons learned" so as we figure things out, we don't forget them later.
+4. After a feature is complete, add our progress to the readme.md file. Add any lessons learned to a section
+5. After successful tests and documentation is updated, add changed files to git and add a detailed commit message. Keep in mind you may need to refrence the commits later to debug complex issues.
