@@ -1,11 +1,25 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::fmt;
 use tracing::debug;
+use wry::WebView;
 
-#[derive(Debug)]
 pub struct Tab {
     pub id: usize,
     pub url: String,
     pub title: String,
+    pub webview: Option<Arc<Mutex<WebView>>>,
+}
+
+impl fmt::Debug for Tab {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Tab")
+            .field("id", &self.id)
+            .field("url", &self.url)
+            .field("title", &self.title)
+            .field("webview", &if self.webview.is_some() { "Some(WebView)" } else { "None" })
+            .finish()
+    }
 }
 
 #[derive(Default)]
@@ -17,14 +31,11 @@ pub struct TabManager {
 
 impl TabManager {
     pub fn new() -> Self {
-        let mut manager = TabManager {
+        TabManager {
             tabs: Vec::new(),
             active_tab: None,
             next_id: 0,
-        };
-        // Create initial tab
-        manager.create_tab("about:blank".to_string());
-        manager
+        }
     }
 
     pub fn create_tab(&mut self, url: String) -> usize {
@@ -35,12 +46,33 @@ impl TabManager {
             id,
             url,
             title: String::from("New Tab"),
+            webview: None,
         };
 
+        let is_first_tab = self.tabs.is_empty();
         self.tabs.push(tab);
-        self.active_tab = Some(id);
+        if is_first_tab {
+            self.active_tab = Some(0);
+        } else {
+            self.active_tab = Some(self.tabs.len() - 1);
+        }
         debug!("Created new tab with id: {}", id);
         id
+    }
+
+    pub fn set_tab_webview(&mut self, id: usize, webview: Arc<Mutex<WebView>>) -> bool {
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
+            tab.webview = Some(webview);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn get_tab_webview(&self, id: usize) -> Option<Arc<Mutex<WebView>>> {
+        self.tabs.iter()
+            .find(|t| t.id == id)
+            .and_then(|tab| tab.webview.clone())
     }
 
     pub fn close_tab(&mut self, id: usize) -> bool {
@@ -53,21 +85,19 @@ impl TabManager {
             }
 
             // If we're closing the active tab, switch to another one first
-            if self.active_tab == Some(index) {
-                let new_active = if index == 0 { 1 } else { index - 1 };
-                self.active_tab = Some(new_active);
+            if let Some(active_index) = self.active_tab {
+                if active_index == index {
+                    // Switch to the previous tab if available, otherwise the next one
+                    let new_active = if index > 0 { index - 1 } else { index + 1 };
+                    self.active_tab = Some(new_active);
+                } else if active_index > index {
+                    // Update active tab index if it's after the removed tab
+                    self.active_tab = Some(active_index - 1);
+                }
             }
 
             // Remove the tab
             self.tabs.remove(index);
-
-            // Update active tab index if it's after the removed tab
-            if let Some(active) = self.active_tab {
-                if active > index {
-                    self.active_tab = Some(active - 1);
-                }
-            }
-
             debug!("Closed tab: {}", id);
             true
         } else {
@@ -128,8 +158,8 @@ mod tests {
     fn test_tab_creation() {
         let mut manager = TabManager::new();
         let id = manager.create_tab("https://example.com".to_string());
-        assert_eq!(manager.tabs.len(), 2); // Including initial tab
-        assert_eq!(manager.active_tab, Some(id));
+        assert_eq!(manager.tabs.len(), 1);
+        assert_eq!(manager.active_tab, Some(0));
     }
 
     #[test]
@@ -139,34 +169,28 @@ mod tests {
         let id2 = manager.create_tab("https://example2.com".to_string());
         
         assert!(manager.switch_to_tab(id1));
-        assert_eq!(manager.active_tab, Some(id1));
+        assert_eq!(manager.active_tab, Some(0));
         
         assert!(manager.switch_to_tab(id2));
-        assert_eq!(manager.active_tab, Some(id2));
+        assert_eq!(manager.active_tab, Some(1));
     }
 
     #[test]
     fn test_tab_closing() {
         let mut manager = TabManager::new();
-        let initial_tab = manager.get_active_tab().unwrap().id;
         let id1 = manager.create_tab("https://example1.com".to_string());
         let id2 = manager.create_tab("https://example2.com".to_string());
         
-        assert_eq!(manager.tabs.len(), 3); // Initial + 2 new tabs
-        
-        // Close first new tab should succeed
-        assert!(manager.close_tab(id1));
-        assert!(manager.tabs.iter().position(|tab| tab.id == id1).is_none());
         assert_eq!(manager.tabs.len(), 2);
         
-        // Close second new tab should succeed
-        assert!(manager.close_tab(id2));
-        assert!(manager.tabs.iter().position(|tab| tab.id == id2).is_none());
+        // Close first tab should succeed
+        assert!(manager.close_tab(id1));
+        assert!(manager.tabs.iter().position(|tab| tab.id == id1).is_none());
         assert_eq!(manager.tabs.len(), 1);
         
-        // Cannot close the initial tab (last remaining tab)
-        assert!(!manager.close_tab(initial_tab));
-        assert!(manager.tabs.iter().position(|tab| tab.id == initial_tab).is_some());
+        // Cannot close the last tab
+        assert!(!manager.close_tab(id2));
+        assert!(manager.tabs.iter().position(|tab| tab.id == id2).is_some());
         assert_eq!(manager.tabs.len(), 1);
 
         // Cannot close non-existent tab

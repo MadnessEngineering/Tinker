@@ -165,28 +165,32 @@ impl BrowserEngine {
         // Create initial tab if none exists
         if let Ok(mut tabs) = self.tabs.lock() {
             if tabs.get_all_tabs().is_empty() {
-                tabs.create_tab("about:blank".to_string());
+                let id = tabs.create_tab("about:blank".to_string());
+
+                // Create the initial WebView
+                let content_view = WebViewBuilder::new(&window)
+                    .with_url("about:blank")
+                    .map_err(|e| {
+                        error!("Failed to set initial WebView URL: {}", e);
+                        Box::new(e) as Box<dyn std::error::Error>
+                    })?
+                    .with_initialization_script("window.addEventListener('DOMContentLoaded', () => { document.body.style.backgroundColor = '#ffffff'; });")
+                    .with_transparent(false)
+                    .with_visible(true)
+                    .build()
+                    .map_err(|e| {
+                        error!("Failed to build initial WebView: {}", e);
+                        Box::new(e) as Box<dyn std::error::Error>
+                    })?;
+
+                // Wrap in Arc<Mutex>
+                let content_view = Arc::new(Mutex::new(content_view));
+
+                // Store the WebView in both the tab and as current content view
+                tabs.set_tab_webview(id, content_view.clone());
+                self.content_view = Some(content_view);
             }
         }
-
-        // Create the content view
-        let content_view = WebViewBuilder::new(&window)
-            .with_url("about:blank")
-            .map_err(|e| {
-                error!("Failed to set initial WebView URL: {}", e);
-                Box::new(e) as Box<dyn std::error::Error>
-            })?
-            .with_initialization_script("window.addEventListener('DOMContentLoaded', () => { document.body.style.backgroundColor = '#ffffff'; });")
-            .with_transparent(false)
-            .with_visible(true)
-            .build()
-            .map_err(|e| {
-                error!("Failed to build initial WebView: {}", e);
-                Box::new(e) as Box<dyn std::error::Error>
-            })?;
-
-        // Store the content view
-        self.content_view = Some(Arc::new(Mutex::new(content_view)));
 
         // Create channels for browser commands
         let (cmd_tx, cmd_rx) = channel::<BrowserCommand>();
@@ -263,7 +267,6 @@ impl BrowserEngine {
 
                             // Create a new WebView for the tab
                             if let Some(window) = &window {
-                                // Create and attach the new WebView
                                 match WebViewBuilder::new(&**window)
                                     .with_url(&url)
                                     .map_err(|e| {
@@ -282,11 +285,13 @@ impl BrowserEngine {
                                         e
                                     })) {
                                     Ok(new_view) => {
-                                        if let Some(ref view) = content_view {
-                                            if let Ok(mut view_lock) = view.lock() {
-                                                *view_lock = new_view;
-                                            }
-                                        }
+                                        let new_view = Arc::new(Mutex::new(new_view));
+                                        
+                                        // Store the WebView in the tab
+                                        tabs.set_tab_webview(id, new_view.clone());
+                                        
+                                        // Set as current content view
+                                        self.content_view = Some(new_view);
                                     }
                                     Err(e) => error!("Failed to create WebView: {}", e)
                                 }
@@ -329,37 +334,12 @@ impl BrowserEngine {
                                 if let Some(ref bar) = tab_bar {
                                     bar.set_active_tab(id);
                                 }
-                                if let Some(active_tab) = tabs.get_active_tab() {
-                                    if let Some(window) = &window {
-                                        // Create and attach new WebView for the active tab
-                                        match WebViewBuilder::new(&**window)
-                                            .with_url(&active_tab.url)
-                                            .map_err(|e| {
-                                                error!("Failed to set WebView URL: {}", e);
-                                                e
-                                            })
-                                            .map(|builder| {
-                                                builder
-                                                    .with_initialization_script("window.addEventListener('DOMContentLoaded', () => { document.body.style.backgroundColor = '#ffffff'; });")
-                                                    .with_transparent(false)
-                                                    .with_visible(true)
-                                                    .build()
-                                            })
-                                            .and_then(|result| result.map_err(|e| {
-                                                error!("Failed to build WebView: {}", e);
-                                                e
-                                            })) {
-                                            Ok(new_view) => {
-                                                if let Some(ref view) = content_view {
-                                                    if let Ok(mut view_lock) = view.lock() {
-                                                        *view_lock = new_view;
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => error!("Failed to create WebView: {}", e)
-                                        }
-                                    }
+                                
+                                // Switch to the tab's WebView
+                                if let Some(webview) = tabs.get_tab_webview(id) {
+                                    self.content_view = Some(webview);
                                 }
+
                                 if let Some(events) = &events {
                                     if let Ok(mut events) = events.lock() {
                                         let _ = events.publish(BrowserEvent::TabSwitched { id });
