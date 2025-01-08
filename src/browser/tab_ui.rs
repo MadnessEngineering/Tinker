@@ -2,6 +2,7 @@ use wry::{WebView, WebViewBuilder};
 use tao::window::Window;
 use crate::event::BrowserEvent;
 use std::sync::mpsc::Sender;
+use tracing::debug;
 
 pub enum TabCommand {
     Create { url: String },
@@ -23,22 +24,39 @@ impl TabBar {
             .with_html(include_str!("../templates/tab_bar.html"))?
             .with_initialization_script(include_str!("../templates/tab_bar.js"))
             .with_ipc_handler(move |msg: String| {
+                debug!("Received IPC message: {}", msg);
                 // Handle IPC messages from the tab bar UI
-                if let Ok(event) = serde_json::from_str::<BrowserEvent>(&msg) {
-                    match event {
-                        BrowserEvent::TabCreated { .. } => {
-                            let _ = command_tx.send(TabCommand::Create {
-                                url: "about:blank".to_string()
-                            });
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&msg) {
+                    if let Some(msg_type) = value.get("type").and_then(|t| t.as_str()) {
+                        debug!("Processing message type: {}", msg_type);
+                        match msg_type {
+                            "TabCreated" => {
+                                let url = value.get("url")
+                                    .and_then(|u| u.as_str())
+                                    .unwrap_or("about:blank")
+                                    .to_string();
+                                debug!("Creating new tab with URL: {}", url);
+                                let _ = command_tx.send(TabCommand::Create { url });
+                            }
+                            "TabClosed" => {
+                                if let Some(id) = value.get("id").and_then(|i| i.as_u64()) {
+                                    debug!("Closing tab with ID: {}", id);
+                                    let _ = command_tx.send(TabCommand::Close { id: id as usize });
+                                }
+                            }
+                            "TabSwitched" => {
+                                if let Some(id) = value.get("id").and_then(|i| i.as_u64()) {
+                                    debug!("Switching to tab with ID: {}", id);
+                                    let _ = command_tx.send(TabCommand::Switch { id: id as usize });
+                                }
+                            }
+                            _ => {
+                                debug!("Unknown message type: {}", msg_type);
+                            }
                         }
-                        BrowserEvent::TabClosed { id } => {
-                            let _ = command_tx.send(TabCommand::Close { id });
-                        }
-                        BrowserEvent::TabSwitched { id } => {
-                            let _ = command_tx.send(TabCommand::Switch { id });
-                        }
-                        _ => {}
                     }
+                } else {
+                    debug!("Failed to parse IPC message as JSON: {}", msg);
                 }
             })
             .build()?;

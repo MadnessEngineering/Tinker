@@ -198,10 +198,8 @@ impl BrowserEngine {
         
         // Update tab UI
         if let Some(tab_bar) = &self.tab_bar {
-            if let Some(tab) = self.tabs.get_active_tab() {
-                tab_bar.add_tab(id, &tab.title, url);
-                tab_bar.set_active_tab(id);
-            }
+            tab_bar.add_tab(id, "New Tab", url);
+            tab_bar.set_active_tab(id);
         }
 
         // Update content view
