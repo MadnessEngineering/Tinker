@@ -368,21 +368,53 @@ impl BrowserEngine {
     }
 
     pub fn create_tab(&mut self, url: &str) -> Result<usize, String> {
-        if let Ok(mut tabs) = self.tabs.lock() {
+        // Create the tab in the manager
+        let id = if let Ok(mut tabs) = self.tabs.lock() {
             let id = tabs.create_tab(url.to_string());
+            
+            // Update the tab bar
+            if let Some(ref tab_bar) = self.tab_bar {
+                tab_bar.update_tab_url(id, url);
+            }
+            
+            // Publish tab created event
             self.publish_event(BrowserEvent::TabCreated { 
                 id,
                 url: url.to_string() 
             })?;
+
+            // If this is the first tab, make it active
+            if tabs.get_all_tabs().len() == 1 {
+                tabs.switch_to_tab(id);
+                self.update_tab_visibility()?;
+                self.publish_event(BrowserEvent::TabActivated { id })?;
+            }
+
             Ok(id)
         } else {
             Err("Failed to lock tab manager".to_string())
+        }?;
+
+        // Load the URL if this is the active tab
+        if let Ok(tabs) = self.tabs.lock() {
+            if let Some(tab) = tabs.get_tab(id) {
+                if tab.is_active {
+                    self.update_tab_content(id, url)?;
+                }
+            }
         }
+
+        Ok(id)
     }
 
     pub fn switch_to_tab(&mut self, id: usize) -> Result<(), String> {
+        // First switch the tab in the manager
         if let Ok(mut tabs) = self.tabs.lock() {
             if tabs.switch_to_tab(id) {
+                // Update WebView content and tab bar
+                self.update_tab_visibility()?;
+                
+                // Publish tab activated event
                 self.publish_event(BrowserEvent::TabActivated { id })?;
                 Ok(())
             } else {
@@ -394,9 +426,39 @@ impl BrowserEngine {
     }
 
     pub fn close_tab(&mut self, id: usize) -> Result<(), String> {
+        // Get the next active tab ID before closing
+        let next_active_id = if let Ok(tabs) = self.tabs.lock() {
+            if let Some(tab) = tabs.get_tab(id) {
+                if tab.is_active {
+                    // Find another tab to activate
+                    tabs.get_all_tabs().iter()
+                        .find(|t| t.id != id)
+                        .map(|t| t.id)
+                }
+                else {
+                    None
+                }
+            } else {
+                return Err("Tab not found".to_string());
+            }
+        } else {
+            return Err("Failed to lock tabs".to_string());
+        };
+
+        // Close the tab
         if let Ok(mut tabs) = self.tabs.lock() {
             if tabs.close_tab(id) {
+                // Publish tab closed event
                 self.publish_event(BrowserEvent::TabClosed { id })?;
+
+                // Switch to another tab if needed
+                if let Some(next_id) = next_active_id {
+                    self.switch_to_tab(next_id)?;
+                } else if tabs.get_all_tabs().is_empty() {
+                    // Create a new blank tab if this was the last one
+                    self.create_tab("about:blank")?;
+                }
+
                 Ok(())
             } else {
                 Err("Tab not found".to_string())
@@ -552,6 +614,58 @@ impl BrowserEngine {
         }
 
         Ok(())
+    }
+
+    fn update_tab_content(&self, id: usize, url: &str) -> Result<(), String> {
+        // First update the tab URL
+        if let Ok(mut tabs) = self.tabs.lock() {
+            if let Some(tab) = tabs.get_tab_mut(id) {
+                tab.url = url.to_string();
+                
+                // If this is the active tab, update the WebView
+                if tab.is_active {
+                    if let Some(view) = &self.content_view {
+                        if let Ok(view) = view.lock() {
+                            view.load_url(url);
+                        }
+                    }
+                }
+                
+                // Publish URL changed event
+                self.publish_event(BrowserEvent::TabUrlChanged {
+                    id,
+                    url: url.to_string(),
+                })?;
+                
+                Ok(())
+            } else {
+                Err(format!("Tab {} not found", id))
+            }
+        } else {
+            Err("Failed to lock tab manager".to_string())
+        }
+    }
+
+    fn update_tab_visibility(&self) -> Result<(), String> {
+        if let Ok(tabs) = self.tabs.lock() {
+            if let Some(active_tab) = tabs.get_active_tab() {
+                // Update WebView content
+                if let Some(view) = &self.content_view {
+                    if let Ok(view) = view.lock() {
+                        view.load_url(&active_tab.url);
+                    }
+                }
+                
+                // Update tab bar
+                if let Some(ref tab_bar) = self.tab_bar {
+                    tab_bar.update_tab_url(active_tab.id, &active_tab.url);
+                    tab_bar.update_tab_title(active_tab.id, &active_tab.title);
+                }
+            }
+            Ok(())
+        } else {
+            Err("Failed to lock tab manager".to_string())
+        }
     }
 }
 
