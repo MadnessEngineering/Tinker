@@ -54,6 +54,9 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
 - 🎯 Implemented CLI interface with version support and descriptive help
 - 🔧 Fixed test suite issues and improved test reliability
 - 🎨 Added custom HTML/CSS menu bar with full keyboard shortcut support
+- 🔄 Added environment variable configuration support
+- 🎯 Improved tab creation with better error handling and UI feedback
+- 🖼️ Fixed window chrome and native controls integration
 
 ## Lessons Learned
 
@@ -62,12 +65,24 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
 - Strong references to parent windows must be maintained
 - Proper display parameters are crucial for preventing frame issues
 - IPC handlers need careful error handling and type checking
+- Event handling should be bi-directional (UI ↔ Backend)
+- UI state should be explicitly synced after backend operations
+- Error handling should include user feedback
+- WebView creation should be atomic (succeed completely or fail safely)
+- Environment variables should be used for configurable defaults
 
 ### Menu System Design
 - Native menu APIs can be inconsistent across platforms
 - HTML/CSS menus provide better control and consistency
 - WebView-based UI components need proper z-index management
 - Keyboard shortcuts should be handled at both UI and system levels
+
+### Event System Design
+- Events should have clear success/failure feedback
+- UI state must be kept in sync with backend state
+- Error handling should be comprehensive and user-friendly
+- Event handlers should be properly scoped and cleaned up
+- Event propagation should be predictable and traceable
 
 ### JavaScript Engine Integration
 - 🎯 Primary Focus: V8 Engine Integration
@@ -127,13 +142,14 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
   - [ ] Install WebSocket Machinery
   - [x] Build Security Mechanisms
   - [x] Draft Technical Schematics
-  - [ ] Craft Control Libraries
+  - [x] Craft Control Libraries
+  - [x] Implement Environment Configuration
 
 ### Phase 2: Testing Machinery
 - [ ] Quality Control Station
   - [x] Assemble Test Runner
   - [x] Craft Assertion Tools
-  - [ ] Design Test Blueprints
+  - [x] Design Test Blueprints
   - [ ] Build Parallel Testing Rig
   - [ ] Engineer Test Isolation Chamber
 
@@ -150,6 +166,7 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
   - [x] Engineer Data Storage
   - [x] Construct Cache Controls
   - [x] Design Session Workshop
+  - [x] Implement Error Recovery
 
 ### Phase 3: Advanced Machinery
 - [ ] Recording Workshop
