@@ -16,4 +16,6 @@ fn test_version_command() {
         .assert()
         .success()
         .stdout(predicates::str::contains(env!("CARGO_PKG_VERSION")));
-} 
+}
+
+// TODO: Add tests for the --headless, --url, --tabs, --record, --record-path, --replay, and --replay-speed options
