@@ -13,8 +13,8 @@ pub enum TabCommand {
 
 #[derive(Clone)]
 pub struct TabBar {
-    height: i32,
-    tabs: Arc<Mutex<WebView>>,
+    pub height: i32,
+    pub tabs: Arc<Mutex<WebView>>,
 }
 
 impl TabBar {
@@ -34,6 +34,13 @@ impl TabBar {
             height: 30,
             tabs,
         })
+    }
+
+    pub fn new_with_webview(height: i32, tabs: Arc<Mutex<WebView>>) -> Self {
+        Self {
+            height,
+            tabs,
+        }
     }
 
     pub fn height(&self) -> i32 {

@@ -88,8 +88,10 @@ function setActiveTab(id) {
 function createNewTab() {
     // Send message to Rust to create a new tab
     window.ipc.postMessage(JSON.stringify({
-        type: 'TabCreated',
-        url: 'https://github.com/DanEdens/Tinker'
+        type: 'Create',
+        data: {
+            url: 'https://github.com/DanEdens/Tinker'
+        }
     }));
 }
 

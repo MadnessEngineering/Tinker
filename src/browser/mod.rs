@@ -282,32 +282,62 @@ impl BrowserEngine {
 
         // Create the tab bar if not in headless mode
         if !self.headless {
-            // Create the tab bar with the command sender
-            let tab_cmd_tx = cmd_tx.clone();
-            let tab_bar = TabBar::new(&window, move |cmd| {
-                match cmd {
-                    TabCommand::Create { url } => {
-                        let _ = tab_cmd_tx.send(BrowserCommand::CreateTab { url });
+            // Initialize the window with the chrome HTML
+            let window_html = include_str!("../templates/window_chrome.html");
+            let window_view = WebViewBuilder::new(&window)
+                .with_html(window_html)?
+                .with_ipc_handler(move |msg: String| {
+                    if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&msg) {
+                        match msg["type"].as_str() {
+                            Some("Create") => {
+                                if let Some(data) = msg["data"].as_object() {
+                                    if let Some(url) = data["url"].as_str() {
+                                        let _ = cmd_tx.send(BrowserCommand::CreateTab { 
+                                            url: url.to_string() 
+                                        });
+                                    }
+                                }
+                            }
+                            Some("Close") => {
+                                if let Some(data) = msg["data"].as_object() {
+                                    if let Some(id) = data["id"].as_u64() {
+                                        let _ = cmd_tx.send(BrowserCommand::CloseTab { 
+                                            id: id as usize 
+                                        });
+                                    }
+                                }
+                            }
+                            Some("Switch") => {
+                                if let Some(data) = msg["data"].as_object() {
+                                    if let Some(id) = data["id"].as_u64() {
+                                        let _ = cmd_tx.send(BrowserCommand::SwitchTab { 
+                                            id: id as usize 
+                                        });
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
                     }
-                    TabCommand::Close { id } => {
-                        let _ = tab_cmd_tx.send(BrowserCommand::CloseTab { id });
-                    }
-                    TabCommand::Switch { id } => {
-                        let _ = tab_cmd_tx.send(BrowserCommand::SwitchTab { id });
-                    }
-                }
-            })?;
+                })
+                .build()?;
+
+            let window_view = Arc::new(Mutex::new(window_view));
+            self.tab_bar = Some(TabBar::new_with_webview(30, window_view));
 
             // Add existing tabs to the UI
             if let Ok(tabs) = self.tabs.lock() {
                 for tab in tabs.get_all_tabs() {
-                    tab_bar.add_tab(tab.id, &tab.title, &tab.url);
+                    if let Some(ref bar) = &self.tab_bar {
+                        bar.add_tab(tab.id, &tab.title, &tab.url);
+                    }
                 }
                 if let Some(active_tab) = tabs.get_active_tab() {
-                    tab_bar.set_active_tab(active_tab.id);
+                    if let Some(ref bar) = &self.tab_bar {
+                        bar.set_active_tab(active_tab.id);
+                    }
                 }
             }
-            self.tab_bar = Some(tab_bar);
         }
 
         // Set up event handling

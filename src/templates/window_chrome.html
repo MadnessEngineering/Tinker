@@ -169,8 +169,10 @@
 
         function createNewTab() {
             window.ipc.postMessage(JSON.stringify({
-                type: 'TabCreated',
-                url: 'about:blank'
+                type: 'Create',
+                data: {
+                    url: 'https://github.com/DanEdens/Tinker'
+                }
             }));
         }
 
@@ -212,15 +214,19 @@
         function closeTab(event, id) {
             event.stopPropagation();
             window.ipc.postMessage(JSON.stringify({
-                type: 'TabClosed',
-                id: id
+                type: 'Close',
+                data: {
+                    id: id
+                }
             }));
         }
 
         function switchTab(id) {
             window.ipc.postMessage(JSON.stringify({
-                type: 'TabSwitched',
-                id: id
+                type: 'Switch',
+                data: {
+                    id: id
+                }
             }));
         }
 
