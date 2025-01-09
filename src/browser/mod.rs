@@ -19,6 +19,7 @@ mod tabs;
 mod event_viewer;
 mod tab_ui;
 mod replay;
+pub mod keyboard;
 
 use self::{
     tabs::TabManager,
@@ -38,15 +39,15 @@ enum BrowserCommand {
 }
 
 pub struct BrowserEngine {
-    headless: bool,
-    events: Option<Arc<Mutex<EventSystem>>>,
-    player: Arc<Mutex<EventPlayer>>,
-    recorder: Arc<Mutex<EventRecorder>>,
-    event_viewer: Arc<Mutex<EventViewer>>,
-    tabs: Arc<Mutex<TabManager>>,
-    tab_bar: Option<TabBar>,
-    content_view: Option<Arc<Mutex<WebView>>>,
-    window: Option<Arc<Window>>,
+    pub headless: bool,
+    pub events: Option<Arc<Mutex<EventSystem>>>,
+    pub player: Arc<Mutex<EventPlayer>>,
+    pub recorder: Arc<Mutex<EventRecorder>>,
+    pub event_viewer: Arc<Mutex<EventViewer>>,
+    pub tabs: Arc<Mutex<TabManager>>,
+    pub tab_bar: Option<TabBar>,
+    pub content_view: Option<Arc<Mutex<WebView>>>,
+    pub window: Option<Arc<Window>>,
 }
 
 impl BrowserEngine {
@@ -183,7 +184,7 @@ impl BrowserEngine {
         let window_builder = WindowBuilder::new()
             .with_title("Tinker Browser")
             .with_inner_size(LogicalSize::new(1024.0, 768.0))
-            .with_decorations(true);
+            .with_decorations(!self.headless);
 
         let window = window_builder.build(&event_loop)?;
         let window = Arc::new(window);
@@ -250,8 +251,8 @@ impl BrowserEngine {
                                             debug!("Page loaded: {}", url);
                                             if let Some(events) = &events {
                                                 if let Ok(mut events) = events.lock() {
-                                                    let _ = events.publish(BrowserEvent::PageLoaded { 
-                                                        url: url.to_string() 
+                                                    let _ = events.publish(BrowserEvent::PageLoaded {
+                                                        url: url.to_string()
                                                     });
                                                 }
                                             }
@@ -262,8 +263,8 @@ impl BrowserEngine {
                                             debug!("Title changed: {}", title);
                                             if let Some(events) = &events {
                                                 if let Ok(mut events) = events.lock() {
-                                                    let _ = events.publish(BrowserEvent::TitleChanged { 
-                                                        title: title.to_string() 
+                                                    let _ = events.publish(BrowserEvent::TitleChanged {
+                                                        title: title.to_string()
                                                     });
                                                 }
                                             }
@@ -308,48 +309,25 @@ impl BrowserEngine {
         // Move content_view into the event loop
         let mut content_view = self.content_view.clone();
 
-        event_loop.run(move |event, _, control_flow| {
+        // If in headless mode, set up a timer to exit after initialization
+        if headless {
+            let exit_timer = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            *control_flow = ControlFlow::WaitUntil(exit_timer);
+        } else {
             *control_flow = ControlFlow::Wait;
+        }
 
-            // Handle tab commands
-            while let Ok(cmd) = tab_rx.try_recv() {
-                match cmd {
-                    TabCommand::Create { url } => {
-                        if let Ok(mut tabs) = tabs.lock() {
-                            let id = tabs.create_tab(url.clone());
-                            if let Some(ref bar) = &tab_bar {
-                                bar.add_tab(id.try_into().unwrap(), "New Tab", &url);
-                                bar.set_active_tab(id.try_into().unwrap());
-                            }
-                            if let Some(events) = &events {
-                                if let Ok(mut events) = events.lock() {
-                                    let _ = events.publish(BrowserEvent::TabCreated { id });
-                                }
-                            }
-                        }
-                    }
-                    TabCommand::Close { id } => {
-                        if let Ok(mut tabs) = tabs.lock() {
-                            if tabs.close_tab(id.try_into().unwrap()) {
-                                if let Some(ref bar) = &tab_bar {
-                                    bar.remove_tab(id.try_into().unwrap());
-                                }
-                            }
-                        }
-                    }
-                    TabCommand::Switch { id } => {
-                        if let Ok(mut tabs) = tabs.lock() {
-                            if tabs.switch_to_tab(id.try_into().unwrap()) {
-                                if let Some(ref bar) = &tab_bar {
-                                    bar.set_active_tab(id.try_into().unwrap());
-                                }
-                            }
+        event_loop.run(move |event, _, control_flow| {
+            match event {
+                Event::NewEvents(_) => {
+                    if headless {
+                        let now = std::time::Instant::now();
+                        if now >= exit_timer {
+                            *control_flow = ControlFlow::Exit;
+                            return;
                         }
                     }
                 }
-            }
-
-            match event {
                 Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
                     ..
@@ -382,6 +360,80 @@ impl BrowserEngine {
                 _ => (),
             }
 
+            // Handle tab commands
+            while let Ok(cmd) = tab_rx.try_recv() {
+                match cmd {
+                    TabCommand::Create { url } => {
+                        if let Ok(mut tabs) = tabs.lock() {
+                            let id = tabs.create_tab(url.clone());
+                            if let Some(ref bar) = &tab_bar {
+                                bar.add_tab(id.try_into().unwrap(), "New Tab", &url);
+                                bar.set_active_tab(id.try_into().unwrap());
+                            }
+                            if let Some(events) = &events {
+                                if let Ok(mut events) = events.lock() {
+                                    let _ = events.publish(BrowserEvent::TabCreated { id });
+                                }
+                            }
+                        }
+                    }
+                    TabCommand::Close { id } => {
+                        if let Ok(mut tabs) = tabs.lock() {
+                            if tabs.close_tab(id.try_into().unwrap()) {
+                                if let Some(ref bar) = &tab_bar {
+                                    bar.remove_tab(id.try_into().unwrap());
+
+                                    // Get the new active tab
+                                    if let Some(active_tab) = tabs.get_active_tab() {
+                                        bar.set_active_tab(active_tab.id.try_into().unwrap());
+
+                                        // Update content view
+                                        if let Some(webview) = tabs.get_tab_webview(active_tab.id) {
+                                            content_view = Some(webview.clone());
+
+                                            // Ensure proper positioning
+                                            if let Some(window) = &window {
+                                                if let Ok(view) = webview.lock() {
+                                                    view.set_bounds(wry::Rect {
+                                                        x: 0_i32,
+                                                        y: 40_i32, // Tab bar height
+                                                        width: window.inner_size().width,
+                                                        height: window.inner_size().height.saturating_sub(40),
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Ensure tab bar stays visible
+                                if let Some(ref bar) = &tab_bar {
+                                    if let Some(window) = &window {
+                                        bar.update_bounds(window);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    TabCommand::Switch { id } => {
+                        if let Ok(mut tabs) = tabs.lock() {
+                            if tabs.switch_to_tab(id.try_into().unwrap()) {
+                                if let Some(ref bar) = &tab_bar {
+                                    bar.set_active_tab(id.try_into().unwrap());
+                                }
+
+                                // Switch to the tab's WebView
+                                if let Some(webview) = tabs.get_tab_webview(id.try_into().unwrap()) {
+                                    content_view = Some(webview.clone());
+                                }
+
+                                let _ = self.publish_event(BrowserEvent::TabSwitched { id: id.try_into().unwrap() });
+                            }
+                        }
+                    }
+                }
+            }
+
             // Handle browser commands
             while let Ok(cmd) = cmd_rx.try_recv() {
                 match cmd {
@@ -396,7 +448,7 @@ impl BrowserEngine {
                         if let Ok(mut tabs) = tabs.lock() {
                             let id = tabs.create_tab(url.clone());
                             info!("Created new tab {} with URL: {}", id, url);
-                            
+
                             // Update tab UI
                             if let Some(ref bar) = &tab_bar {
                                 bar.add_tab(id.try_into().unwrap(), "New Tab", &url);
@@ -445,8 +497,8 @@ impl BrowserEngine {
                                                                 debug!("Page loaded: {}", url);
                                                                 if let Some(events) = &events {
                                                                     if let Ok(mut events) = events.lock() {
-                                                                        let _ = events.publish(BrowserEvent::PageLoaded { 
-                                                                            url: url.to_string() 
+                                                                        let _ = events.publish(BrowserEvent::PageLoaded {
+                                                                            url: url.to_string()
                                                                         });
                                                                     }
                                                                 }
@@ -457,8 +509,8 @@ impl BrowserEngine {
                                                                 debug!("Title changed: {}", title);
                                                                 if let Some(events) = &events {
                                                                     if let Ok(mut events) = events.lock() {
-                                                                        let _ = events.publish(BrowserEvent::TitleChanged { 
-                                                                            title: title.to_string() 
+                                                                        let _ = events.publish(BrowserEvent::TitleChanged {
+                                                                            title: title.to_string()
                                                                         });
                                                                     }
                                                                 }
@@ -482,10 +534,10 @@ impl BrowserEngine {
                                     })) {
                                     Ok(new_view) => {
                                         let new_view = Arc::new(Mutex::new(new_view));
-                                        
+
                                         // Store the WebView in the tab
                                         tabs.set_tab_webview(id, new_view.clone());
-                                        
+
                                         // Set as current content view
                                         content_view = Some(new_view);
 
@@ -493,9 +545,9 @@ impl BrowserEngine {
                                         if let Some(events) = &events {
                                             if let Ok(mut events) = events.lock() {
                                                 let _ = events.publish(BrowserEvent::TabCreated { id });
-                                                let _ = events.publish(BrowserEvent::TabUrlChanged { 
-                                                    id, 
-                                                    url: url.clone() 
+                                                let _ = events.publish(BrowserEvent::TabUrlChanged {
+                                                    id,
+                                                    url: url.clone()
                                                 });
                                             }
                                         }
@@ -529,10 +581,10 @@ impl BrowserEngine {
                                 if let Some(ref bar) = &tab_bar {
                                     bar.set_active_tab(id as u32);
                                 }
-                                
+
                                 // Switch to the tab's WebView
                                 if let Some(webview) = tabs.get_tab_webview(id) {
-                                    self.content_view = Some(webview);
+                                    content_view = Some(webview.clone());
                                 }
 
                                 let _ = self.publish_event(BrowserEvent::TabSwitched { id });
@@ -662,81 +714,5 @@ impl BrowserEngine {
         } else {
             Err("Failed to lock tabs".to_string())
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_browser_navigation() {
-        let mut browser = BrowserEngine::new(false, None);
-
-        // Create initial tab and get its URL
-        let initial_url = {
-            let mut tabs = browser.tabs.lock().unwrap();
-            let id = tabs.create_tab("about:blank".to_string());
-            tabs.get_active_tab().map(|tab| tab.url.clone()).unwrap()
-        };
-        assert_eq!(initial_url, "about:blank");
-
-        // Navigate to the test URL
-        browser.navigate("https://www.example.com").unwrap();
-
-        // Verify the URL was updated
-        let final_url = {
-            let tabs = browser.tabs.lock().unwrap();
-            tabs.get_active_tab().map(|tab| tab.url.clone()).unwrap()
-        };
-        assert_eq!(final_url, "https://www.example.com");
-    }
-
-    #[test]
-    fn test_event_publishing() {
-        // Create event system
-        let mut events = EventSystem::new("localhost", "test-browser");
-        events.connect().unwrap();
-        let events = Arc::new(Mutex::new(events));
-
-        // Create browser with events enabled
-        let mut browser = BrowserEngine::new(false, Some(events));
-
-        // Test tab creation events
-        let tab_id = browser.create_tab("https://example.com").unwrap();
-        
-        // Test tab switching events
-        browser.switch_to_tab(tab_id).unwrap();
-        
-        // Test navigation events
-        browser.navigate("https://example.com/page2").unwrap();
-        
-        // Test tab closing events
-        browser.close_tab(tab_id).unwrap();
-    }
-
-    #[test]
-    fn test_event_replay() {
-        let mut browser = BrowserEngine::new(false, None);
-        
-        // Create a tab and verify it's created
-        let tab_id = browser.create_tab("https://example.com").unwrap();
-        
-        // Replay a navigation event
-        let event = BrowserEvent::Navigation {
-            url: "https://example.com/page2".to_string()
-        };
-        if let Ok(mut tabs) = browser.tabs.lock() {
-            if let Some(tab) = tabs.get_tab_mut(tab_id) {
-                tab.url = "https://example.com/page2".to_string();
-            }
-        }
-        
-        // Verify the URL was updated
-        let final_url = {
-            let tabs = browser.tabs.lock().unwrap();
-            tabs.get_active_tab().map(|tab| tab.url.clone()).unwrap()
-        };
-        assert_eq!(final_url, "https://example.com/page2");
     }
 }

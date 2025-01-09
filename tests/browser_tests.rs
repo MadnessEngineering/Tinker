@@ -6,9 +6,12 @@ use std::fs;
 #[test]
 fn test_browser_headless_startup() {
     let mut cmd = Command::cargo_bin("tinker").unwrap();
-    cmd.arg("--headless")
+    let assert = cmd
+        .arg("--headless")
         .timeout(Duration::from_secs(5))
-        .assert()
+        .assert();
+
+    assert
         .success()
         .stdout(predicate::str::contains("Starting Tinker Workshop"));
 }
@@ -16,9 +19,12 @@ fn test_browser_headless_startup() {
 #[test]
 fn test_browser_with_url() {
     let mut cmd = Command::cargo_bin("tinker").unwrap();
-    cmd.args(["--headless", "--url", "https://github.com/DanEdens/Tinker"])
+    let assert = cmd
+        .args(["--headless", "--url", "https://github.com/DanEdens/Tinker"])
         .timeout(Duration::from_secs(5))
-        .assert()
+        .assert();
+
+    assert
         .success()
         .stdout(predicate::str::contains("Navigating to: https://github.com/DanEdens/Tinker"));
 }
@@ -26,9 +32,12 @@ fn test_browser_with_url() {
 #[test]
 fn test_browser_with_multiple_tabs() {
     let mut cmd = Command::cargo_bin("tinker").unwrap();
-    cmd.args(["--headless", "--tabs", "3"])
+    let assert = cmd
+        .args(["--headless", "--tabs", "3"])
         .timeout(Duration::from_secs(5))
-        .assert()
+        .assert();
+
+    assert
         .success()
         .stdout(predicate::str::contains("Created new tab"));
 }
@@ -41,18 +50,21 @@ fn test_browser_recording() {
     let _ = fs::remove_file(record_path);
 
     let mut cmd = Command::cargo_bin("tinker").unwrap();
-    cmd.args([
-        "--headless",
-        "--record",
-        "--record-path",
-        record_path,
-        "--url",
-        "https://github.com/DanEdens/Tinker"
-    ])
-    .timeout(Duration::from_secs(5))
-    .assert()
-    .success()
-    .stdout(predicate::str::contains("Recording will be saved to"));
+    let assert = cmd
+        .args([
+            "--headless",
+            "--record",
+            "--record-path",
+            record_path,
+            "--url",
+            "https://github.com/DanEdens/Tinker"
+        ])
+        .timeout(Duration::from_secs(5))
+        .assert();
+
+    assert
+        .success()
+        .stdout(predicate::str::contains("Recording will be saved to"));
 
     // Verify the recording file was created
     assert!(fs::metadata(record_path).is_ok());
@@ -67,31 +79,36 @@ fn test_browser_replay() {
 
     // First create a recording
     let mut cmd = Command::cargo_bin("tinker").unwrap();
-    cmd.args([
-        "--headless",
-        "--record",
-        "--record-path",
-        record_path,
-        "--url",
-        "https://github.com/DanEdens/Tinker"
-    ])
-    .timeout(Duration::from_secs(5))
-    .assert()
-    .success();
+    let assert = cmd
+        .args([
+            "--headless",
+            "--record",
+            "--record-path",
+            record_path,
+            "--url",
+            "https://github.com/DanEdens/Tinker"
+        ])
+        .timeout(Duration::from_secs(5))
+        .assert();
+
+    assert.success();
 
     // Then replay it
     let mut cmd = Command::cargo_bin("tinker").unwrap();
-    cmd.args([
-        "--headless",
-        "--replay",
-        record_path,
-        "--replay-speed",
-        "2.0"
-    ])
-    .timeout(Duration::from_secs(5))
-    .assert()
-    .success()
-    .stdout(predicate::str::contains("Replaying events"));
+    let assert = cmd
+        .args([
+            "--headless",
+            "--replay",
+            record_path,
+            "--replay-speed",
+            "2.0"
+        ])
+        .timeout(Duration::from_secs(5))
+        .assert();
+
+    assert
+        .success()
+        .stdout(predicate::str::contains("Replaying events"));
 
     // Clean up
     let _ = fs::remove_file(record_path);
@@ -100,9 +117,12 @@ fn test_browser_replay() {
 #[test]
 fn test_browser_record_without_path() {
     let mut cmd = Command::cargo_bin("tinker").unwrap();
-    cmd.args(["--headless", "--record"])
+    let assert = cmd
+        .args(["--headless", "--record"])
         .timeout(Duration::from_secs(5))
-        .assert()
+        .assert();
+
+    assert
         .failure()
         .stderr(predicate::str::contains("--record-path is required"));
 }

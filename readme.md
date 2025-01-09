@@ -203,6 +203,9 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
 - WebView cleanup must be explicit to prevent memory leaks
 - Tab creation and closing operations need proper state synchronization
 - Window resize events must update all WebView bounds correctly
+- Tab bar visibility must be maintained during tab operations
+- WebView bounds must be updated after tab operations to maintain layout
+- Use !important CSS rules for critical UI elements that must stay visible
 
 ### Menu System Design
 - Native menu APIs can be inconsistent across platforms

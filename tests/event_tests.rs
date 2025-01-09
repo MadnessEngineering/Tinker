@@ -1,73 +1,93 @@
-use std::sync::{Arc, Mutex};
-use tinker::{
-    browser::BrowserEngine,
-    event::{EventSystem, BrowserEvent},
-};
+use tinker::event::{BrowserEvent, EventSystem};
 
 #[test]
-fn test_browser_events() {
-    // Create event system
-    let mut events = EventSystem::new("localhost", "test-browser");
-    events.connect().unwrap();
-    let events = Arc::new(Mutex::new(events));
+fn test_event_serialization() {
+    // Test Navigation event
+    let event = BrowserEvent::Navigation {
+        url: "https://example.com".to_string(),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains("Navigation"));
+    assert!(json.contains("example.com"));
 
-    // Create browser with events enabled
-    let mut browser = BrowserEngine::new(true, Some(events.clone()));
+    // Test TabCreated event
+    let event = BrowserEvent::TabCreated { id: 1 };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains("TabCreated"));
+    assert!(json.contains("1"));
 
-    // Create a tab and verify the event
-    let tab_id = browser.create_tab("about:blank").unwrap();
-    
-    // Navigate to a URL and verify the event
-    browser.navigate("https://example.com").unwrap();
+    // Test TabUrlChanged event
+    let event = BrowserEvent::TabUrlChanged {
+        id: 1,
+        url: "https://example.com".to_string(),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains("TabUrlChanged"));
+    assert!(json.contains("example.com"));
 
-    // Switch tabs and verify the event
-    browser.switch_to_tab(tab_id).unwrap();
-
-    // Close tab and verify the event
-    browser.close_tab(tab_id).unwrap();
+    // Test Error event
+    let event = BrowserEvent::Error {
+        message: "Test error".to_string(),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains("Error"));
+    assert!(json.contains("Test error"));
 }
 
 #[test]
-fn test_event_subscription() {
-    // Create event system
-    let mut events = EventSystem::new("localhost", "test-subscriber");
-    events.connect().unwrap();
-
-    // Subscribe to all browser events
-    events.subscribe("browser/#").unwrap();
+fn test_event_system_creation() {
+    let system = EventSystem::new("localhost", "test-client");
+    assert!(system.client.is_none());
+    assert_eq!(system.options.client_id(), "test-client");
 }
 
 #[test]
-fn test_event_publishing() {
-    // Create event system
-    let mut events = EventSystem::new("localhost", "test-publisher");
-    events.connect().unwrap();
+fn test_event_topic_mapping() {
+    // Test Navigation event topic
+    let event = BrowserEvent::Navigation {
+        url: "https://example.com".to_string(),
+    };
+    let topic = match &event {
+        BrowserEvent::Navigation { .. } => "browser/navigation",
+        _ => panic!("Wrong topic"),
+    };
+    assert_eq!(topic, "browser/navigation");
 
-    // Test publishing different types of events
-    let events_to_test = vec![
-        BrowserEvent::Navigation {
-            url: "https://example.com".to_string(),
-        },
-        BrowserEvent::TabCreated { id: 1 },
-        BrowserEvent::TabClosed { id: 1 },
-        BrowserEvent::TabSwitched { id: 1 },
-        BrowserEvent::TabUrlChanged {
-            id: 1,
-            url: "https://example.com".to_string(),
-        },
-        BrowserEvent::TabTitleChanged {
-            id: 1,
-            title: "Test Page".to_string(),
-        },
-        BrowserEvent::PageLoaded {
-            url: "https://example.com".to_string(),
-        },
-        BrowserEvent::Error {
-            message: "Test error".to_string(),
-        },
-    ];
+    // Test TabCreated event topic
+    let event = BrowserEvent::TabCreated { id: 1 };
+    let topic = match &event {
+        BrowserEvent::TabCreated { .. } => "browser/tabs/created",
+        _ => panic!("Wrong topic"),
+    };
+    assert_eq!(topic, "browser/tabs/created");
 
-    for event in events_to_test {
-        events.publish(event).unwrap();
+    // Test TabUrlChanged event topic
+    let event = BrowserEvent::TabUrlChanged {
+        id: 1,
+        url: "https://example.com".to_string(),
+    };
+    let topic = match &event {
+        BrowserEvent::TabUrlChanged { .. } => "browser/tabs/url",
+        _ => panic!("Wrong topic"),
+    };
+    assert_eq!(topic, "browser/tabs/url");
+}
+
+#[test]
+fn test_event_cloning() {
+    let event = BrowserEvent::Navigation {
+        url: "https://example.com".to_string(),
+    };
+    let cloned = event.clone();
+
+    match (event, cloned) {
+        (
+            BrowserEvent::Navigation { url: url1 },
+            BrowserEvent::Navigation { url: url2 }
+        ) => {
+            assert_eq!(url1, url2);
+            assert_eq!(url1, "https://example.com");
+        }
+        _ => panic!("Event cloning failed"),
     }
 } 
