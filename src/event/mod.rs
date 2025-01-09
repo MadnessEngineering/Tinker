@@ -76,6 +76,11 @@ impl EventSystem {
         // Store client first so we can publish the connection message
         self.client = Some(client);
 
+        // Subscribe to command topic
+        if let Some(ref mut client) = self.client {
+            client.subscribe("browser/command", QoS::AtLeastOnce)?;
+        }
+
         // Publish connection status
         let status = json!({
             "status": "connected",
@@ -93,11 +98,19 @@ impl EventSystem {
             )?;
         }
 
+        // Clone necessary fields for the event loop
+        let mut event_system = self.clone();
+
         // Spawn a thread to handle incoming messages
         std::thread::spawn(move || {
             debug!("Starting MQTT event loop");
             for notification in connection.iter() {
                 match notification {
+                    Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(msg))) => {
+                        if let Err(e) = event_system.handle_incoming_message(&msg.topic, &msg.payload) {
+                            error!("Failed to handle incoming message: {}", e);
+                        }
+                    }
                     Ok(event) => debug!("Received MQTT event: {:?}", event),
                     Err(e) => error!("MQTT error: {:?}", e),
                 }
@@ -184,6 +197,64 @@ impl EventSystem {
             BrowserEvent::Error { .. } => "browser/error",
             BrowserEvent::CommandReceived { .. } => "browser/command/received",
             BrowserEvent::CommandExecuted { .. } => "browser/command/executed",
+        }
+    }
+
+    fn handle_incoming_message(&mut self, topic: &str, payload: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        match topic {
+            "browser/command" => {
+                let command_str = String::from_utf8_lossy(payload);
+                // Log that we received a command
+                self.publish(BrowserEvent::CommandReceived {
+                    command: command_str.to_string(),
+                })?;
+
+                // Parse and handle the command
+                if let Ok(command) = serde_json::from_str::<BrowserCommand>(&command_str) {
+                    if let Some(sender) = &self.command_sender {
+                        match sender.send(command) {
+                            Ok(_) => {
+                                self.publish(BrowserEvent::CommandExecuted {
+                                    command: command_str.to_string(),
+                                    success: true,
+                                })?;
+                            }
+                            Err(e) => {
+                                self.publish(BrowserEvent::Error {
+                                    message: format!("Failed to send command: {}", e),
+                                })?;
+                                self.publish(BrowserEvent::CommandExecuted {
+                                    command: command_str.to_string(),
+                                    success: false,
+                                })?;
+                            }
+                        }
+                    }
+                } else {
+                    self.publish(BrowserEvent::Error {
+                        message: format!("Invalid command format: {}", command_str),
+                    })?;
+                    self.publish(BrowserEvent::CommandExecuted {
+                        command: command_str.to_string(),
+                        success: false,
+                    })?;
+                }
+            }
+            _ => debug!("Received message on unhandled topic: {}", topic),
+        }
+        Ok(())
+    }
+}
+
+// Add Clone implementation for EventSystem
+impl Clone for EventSystem {
+    fn clone(&self) -> Self {
+        Self {
+            client: None, // New connection will be created in event loop
+            options: self.options.clone(),
+            broker_url: self.broker_url.clone(),
+            client_id: self.client_id.clone(),
+            command_sender: self.command_sender.clone(),
         }
     }
 }

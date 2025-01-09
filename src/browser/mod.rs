@@ -149,9 +149,13 @@ impl BrowserEngine {
         }
     }
 
-    pub fn stop_recording(&self) {
+    pub fn stop_recording(&self) -> Result<(), String> {
         if let Ok(mut recorder) = self.recorder.lock() {
             recorder.stop();
+            info!("Stopped recording");
+            Ok(())
+        } else {
+            Err("Failed to lock recorder".to_string())
         }
     }
 
@@ -169,15 +173,59 @@ impl BrowserEngine {
         Ok(())
     }
 
-    pub fn start_replay(&self) {
+    pub fn start_replay(&mut self) -> Result<(), String> {
         if let Ok(mut player) = self.player.lock() {
             player.start();
+            info!("Started replay");
+
+            // Clone necessary handles for the replay thread
+            let player = self.player.clone();
+            let engine = Arc::new(Mutex::new(self.clone()));
+
+            // Spawn replay thread
+            std::thread::spawn(move || {
+                let mut last_check = Instant::now();
+                while let Ok(mut player) = player.lock() {
+                    if let Some(event) = player.next_event() {
+                        if let Ok(mut engine) = engine.lock() {
+                            if let Err(e) = engine.handle_command(BrowserCommand::PlayEvent { event }) {
+                                error!("Failed to replay event: {}", e);
+                            }
+                        }
+                    }
+                    
+                    // Sleep a bit to prevent busy waiting
+                    if last_check.elapsed() < Duration::from_millis(10) {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    last_check = Instant::now();
+                }
+                info!("Replay completed");
+            });
+
+            Ok(())
+        } else {
+            Err("Failed to lock player".to_string())
         }
     }
 
-    pub fn set_replay_speed(&self, speed: f32) {
+    pub fn stop_replay(&self) -> Result<(), String> {
+        if let Ok(mut player) = self.player.lock() {
+            player.stop();
+            info!("Stopped replay");
+            Ok(())
+        } else {
+            Err("Failed to lock player".to_string())
+        }
+    }
+
+    pub fn set_replay_speed(&self, speed: f32) -> Result<(), String> {
         if let Ok(mut player) = self.player.lock() {
             player.set_speed(speed);
+            info!("Set replay speed to {}", speed);
+            Ok(())
+        } else {
+            Err("Failed to lock player".to_string())
         }
     }
 
@@ -406,6 +454,22 @@ impl BrowserEngine {
                     }
                 }
             }
+        }
+    }
+}
+
+impl Clone for BrowserEngine {
+    fn clone(&self) -> Self {
+        BrowserEngine {
+            headless: self.headless,
+            events: self.events.clone(),
+            player: self.player.clone(),
+            recorder: self.recorder.clone(),
+            event_viewer: self.event_viewer.clone(),
+            tabs: self.tabs.clone(),
+            tab_bar: self.tab_bar.clone(),
+            content_view: self.content_view.clone(),
+            window: self.window.clone(),
         }
     }
 }
