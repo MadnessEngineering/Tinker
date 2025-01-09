@@ -375,7 +375,7 @@ impl BrowserEngine {
                                                 .with_visible(true)
                                                 .with_bounds(wry::Rect {
                                                     x: 0,
-                                                    y: 80,  // Position below both title bar and tab bar
+                                                    y: 80,
                                                     width: window_size.width,
                                                     height: window_size.height.saturating_sub(80),
                                                 })
@@ -389,22 +389,34 @@ impl BrowserEngine {
                                             let new_view = Arc::new(Mutex::new(new_view));
                                             
                                             // Store the WebView in the tab
-                                            if let Ok(mut tabs_guard) = tabs.lock() {
-                                                tabs_guard.set_tab_webview(id, new_view.clone());
-                                            }
+                                            tabs_guard.set_tab_webview(id, new_view.clone());
                                             
-                                            // Update tab bar
-                                            if let Some(ref tab_bar) = tab_bar {
-                                                if let Ok(mut bar) = tab_bar.lock() {
-                                                    bar.add_tab(id, &url);  // Use URL as initial title
-                                                    bar.set_active_tab(id);
+                                            // Update content view
+                                            content_view = Some(new_view);
+
+                                            // Notify UI of successful tab creation
+                                            if let Some(ref chrome_view) = chrome_view {
+                                                if let Ok(view) = chrome_view.lock() {
+                                                    let _ = view.evaluate_script(&format!(
+                                                        "addTab({}, '{}', '{}')",
+                                                        id, "New Tab", url
+                                                    ));
                                                 }
                                             }
-                                            
-                                            // Set as current content view
-                                            content_view = Some(new_view);
                                         }
-                                        Err(e) => error!("Failed to create WebView: {}", e)
+                                        Err(e) => {
+                                            error!("Failed to create WebView: {}", e);
+                                            // Remove the tab since WebView creation failed
+                                            tabs_guard.close_tab(id);
+                                            // Notify UI of failure
+                                            if let Some(ref chrome_view) = chrome_view {
+                                                if let Ok(view) = chrome_view.lock() {
+                                                    let _ = view.evaluate_script(
+                                                        "console.error('Failed to create new tab')"
+                                                    );
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
