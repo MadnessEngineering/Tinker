@@ -1,54 +1,76 @@
 use tao::window::Window;
+use std::sync::mpsc::Sender;
 use wry::{WebView, WebViewBuilder};
-use serde::Deserialize;
 use std::sync::{Arc, Mutex};
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", content = "data")]
-pub enum TabCommand {
-    Create { url: String },
-    Close { id: usize },
-    Switch { id: usize },
-}
 
 #[derive(Clone)]
 pub struct TabBar {
-    pub height: i32,
-    pub tabs: Arc<Mutex<WebView>>,
+    webview: Arc<Mutex<WebView>>,
+    cmd_tx: Sender<TabCommand>,
 }
 
 impl TabBar {
-    pub fn new(window: &Window, on_command: impl Fn(TabCommand) + Send + 'static) -> Result<Self, Box<dyn std::error::Error>> {
-        let tabs = WebViewBuilder::new(window)
+    pub fn new(window: &Arc<Window>, cmd_tx: Sender<TabCommand>) -> Result<Self, Box<dyn std::error::Error>> {
+        let tab_height: u32 = 40;
+        let cmd_tx_clone = cmd_tx.clone();
+        let webview = WebViewBuilder::new(window)
+            .with_bounds(wry::Rect {
+                x: 0_i32,
+                y: 0_i32,
+                width: window.inner_size().width,
+                height: tab_height,
+            })
             .with_initialization_script(include_str!("../templates/tab_bar.js"))
             .with_html(include_str!("../templates/tab_bar.html"))?
             .with_ipc_handler(move |msg: String| {
                 if let Ok(cmd) = serde_json::from_str::<TabCommand>(&msg) {
-                    on_command(cmd);
+                    let _ = cmd_tx_clone.send(cmd);
                 }
             })
             .build()?;
 
-        let tabs = Arc::new(Mutex::new(tabs));
-        Ok(TabBar {
-            height: 30,
-            tabs,
+        Ok(Self {
+            webview: Arc::new(Mutex::new(webview)),
+            cmd_tx,
         })
     }
 
-    pub fn new_with_webview(height: i32, tabs: Arc<Mutex<WebView>>) -> Self {
-        Self {
-            height,
-            tabs,
+    pub fn add_tab(&self, id: u32, title: &str, url: &str) {
+        if let Ok(webview) = self.webview.lock() {
+            let _ = webview.evaluate_script(&format!(
+                "addTab({}, '{}', '{}');",
+                id,
+                title.replace('\'', "\\'"),
+                url.replace('\'', "\\'")
+            ));
         }
     }
 
-    pub fn height(&self) -> i32 {
-        self.height
+    pub fn remove_tab(&self, id: u32) {
+        if let Ok(webview) = self.webview.lock() {
+            let _ = webview.evaluate_script(&format!("removeTab({});", id));
+        }
     }
 
-    pub fn update_tab_url(&self, id: usize, url: &str) {
-        if let Ok(tabs) = &self.tabs.lock() {
+    pub fn set_active_tab(&self, id: u32) {
+        if let Ok(webview) = self.webview.lock() {
+            let _ = webview.evaluate_script(&format!("setActiveTab({});", id));
+        }
+    }
+
+    pub fn update_bounds(&self, window: &Window) {
+        if let Ok(webview) = self.webview.lock() {
+            webview.set_bounds(wry::Rect {
+                x: 0_i32,
+                y: 0_i32,
+                width: window.inner_size().width,
+                height: 40,
+            });
+        }
+    }
+
+    pub fn update_tab_url(&self, id: u32, url: &str) {
+        if let Ok(webview) = self.webview.lock() {
             let js = format!(
                 r#"
                 const tab = document.querySelector(`[data-tab-id="{}"]`);
@@ -56,14 +78,15 @@ impl TabBar {
                     tab.setAttribute('data-url', '{}');
                 }}
                 "#,
-                id, url
+                id,
+                url.replace('\'', "\\'")
             );
-            let _ = tabs.evaluate_script(&js);
+            let _ = webview.evaluate_script(&js);
         }
     }
 
-    pub fn update_tab_title(&self, id: usize, title: &str) {
-        if let Ok(tabs) = &self.tabs.lock() {
+    pub fn update_tab_title(&self, id: u32, title: &str) {
+        if let Ok(webview) = self.webview.lock() {
             let js = format!(
                 r#"
                 const tab = document.querySelector(`[data-tab-id="{}"]`);
@@ -71,45 +94,18 @@ impl TabBar {
                     tab.querySelector('.tab-title').textContent = '{}';
                 }}
                 "#,
-                id, title
+                id,
+                title.replace('\'', "\\'")
             );
-            let _ = tabs.evaluate_script(&js);
+            let _ = webview.evaluate_script(&js);
         }
     }
+}
 
-    pub fn add_tab(&self, id: usize, title: &str, url: &str) {
-        if let Ok(tabs) = &self.tabs.lock() {
-            let js = format!(
-                r#"
-                addTab({}, '{}', '{}');
-                "#,
-                id, title, url
-            );
-            let _ = tabs.evaluate_script(&js);
-        }
-    }
-
-    pub fn remove_tab(&self, id: usize) {
-        if let Ok(tabs) = &self.tabs.lock() {
-            let js = format!(
-                r#"
-                removeTab({});
-                "#,
-                id
-            );
-            let _ = tabs.evaluate_script(&js);
-        }
-    }
-
-    pub fn set_active_tab(&self, id: usize) {
-        if let Ok(tabs) = &self.tabs.lock() {
-            let js = format!(
-                r#"
-                setActiveTab({});
-                "#,
-                id
-            );
-            let _ = tabs.evaluate_script(&js);
-        }
-    }
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TabCommand {
+    Create { url: String },
+    Close { id: u32 },
+    Switch { id: u32 },
 } 

@@ -393,3 +393,12 @@ This workshop is licensed under the MIT License - see the [LICENSE](LICENSE) fil
 ## Project Status
 
 🚧️ Currently In The Workshop - Not ready for production use
+
+### Lessons Learned
+
+#### MQTT Event System
+- MQTT broker URL must be properly parsed to extract host and port
+- Port should be taken from the URL or default to 1883
+- Connection errors should be handled gracefully with reconnection attempts
+- Event system should maintain its own state for reconnection handling
+- Broker URL should be stored for debugging and reconnection purposes

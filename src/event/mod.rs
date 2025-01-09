@@ -4,6 +4,7 @@ use rumqttc::{Client, MqttOptions, QoS};
 use serde::{Deserialize, Serialize};
 use tracing::{info, error, debug};
 use std::time::Duration;
+use url::Url;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum BrowserEvent {
@@ -21,24 +22,39 @@ pub enum BrowserEvent {
 pub struct EventSystem {
     client: Option<Client>,
     options: MqttOptions,
+    broker_url: String,
 }
 
 impl EventSystem {
     pub fn new(broker_url: &str, client_id: &str) -> Self {
         info!("Creating new event system with broker: {}", broker_url);
 
-        let mut options = MqttOptions::new(client_id, broker_url, 3003);
+        // Parse the MQTT URL
+        let url = match Url::parse(broker_url) {
+            Ok(url) => url,
+            Err(e) => {
+                error!("Failed to parse broker URL: {}", e);
+                // Default to localhost:1883 if URL is invalid
+                Url::parse("mqtt://localhost:1883").unwrap()
+            }
+        };
+
+        let host = url.host_str().unwrap_or("localhost");
+        let port = url.port().unwrap_or(1883);
+
+        let mut options = MqttOptions::new(client_id, host, port);
         options.set_keep_alive(Duration::from_secs(5));
         options.set_clean_session(true);
 
         Self {
             client: None,
             options,
+            broker_url: broker_url.to_string(),
         }
     }
 
     pub fn connect(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        debug!("Connecting to MQTT broker...");
+        debug!("Connecting to MQTT broker at {}", self.broker_url);
         let (client, mut connection) = Client::new(self.options.clone(), 10);
 
         // Spawn a thread to handle incoming messages
@@ -79,7 +95,8 @@ impl EventSystem {
             debug!("Publishing event to {}: {}", topic, payload);
             match client.publish(topic, QoS::AtLeastOnce, false, payload.as_bytes()) {
                 Ok(_) => Ok(()),
-                Err(_) => {
+                Err(e) => {
+                    error!("Failed to publish event: {}", e);
                     // If publish fails, try to reconnect once
                     let _ = self.connect();
                     if let Some(ref mut client) = self.client {
