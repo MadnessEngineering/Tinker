@@ -7,7 +7,7 @@ use std::time::Duration;
 use url::Url;
 use serde_json::json;
 use std::sync::mpsc::Sender;
-use crate::browser::BrowserCommand;
+use crate::commands::BrowserCommand;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BrowserEvent {
@@ -49,12 +49,12 @@ impl EventSystem {
             Err(e) => {
                 error!("Failed to parse broker URL: {}", e);
                 // Default to localhost:1883 if URL is invalid
-                Url::parse("mqtt://localhost:1883").unwrap()
+                Url::parse("mqtt://localhost:3003").unwrap()
             }
         };
 
         let host = url.host_str().unwrap_or("localhost");
-        let port = url.port().unwrap_or(1883);
+        let port = url.port().unwrap_or(3003);
 
         let mut options = MqttOptions::new(client_id, host, port);
         options.set_keep_alive(Duration::from_secs(5));
@@ -243,6 +243,10 @@ impl EventSystem {
             _ => debug!("Received message on unhandled topic: {}", topic),
         }
         Ok(())
+    }
+
+    pub fn get_command_sender(&self) -> Option<Sender<BrowserCommand>> {
+        self.command_sender.clone()
     }
 }
 

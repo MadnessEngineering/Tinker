@@ -10,10 +10,8 @@ use tao::{
     window::{WindowBuilder, Window},
     dpi::LogicalSize,
 };
-use wry::{WebView, WebViewBuilder, Error};
+use wry::{WebView, WebViewBuilder};
 use tracing::{debug, info, error};
-
-use crate::event::{BrowserEvent, EventSystem};
 
 mod tabs;
 mod event_viewer;
@@ -28,15 +26,8 @@ use self::{
     replay::{EventRecorder, EventPlayer},
 };
 
-#[derive(Debug)]
-pub enum BrowserCommand {
-    Navigate { url: String },
-    CreateTab { url: String },
-    CloseTab { id: usize },
-    SwitchTab { id: usize },
-    RecordEvent { event: BrowserEvent },
-    PlayEvent { event: BrowserEvent },
-}
+use crate::event::{BrowserEvent, EventSystem};
+use crate::commands::BrowserCommand;
 
 pub struct BrowserEngine {
     pub headless: bool,
@@ -190,30 +181,41 @@ impl BrowserEngine {
 
             // Clone necessary handles for the replay thread
             let player = self.player.clone();
-            let engine = Arc::new(Mutex::new(self.clone()));
+            let cmd_tx = if let Some(ref events) = self.events {
+                if let Ok(events) = events.lock() {
+                    events.get_command_sender()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
-            // Spawn replay thread
-            std::thread::spawn(move || {
-                let mut last_check = Instant::now();
-                while let Ok(mut player) = player.lock() {
-                    if let Some(event) = player.next_event() {
-                        if let Ok(mut engine) = engine.lock() {
-                            if let Err(e) = engine.handle_command(BrowserCommand::PlayEvent { event }) {
-                                error!("Failed to replay event: {}", e);
+            if let Some(cmd_tx) = cmd_tx {
+                // Spawn replay thread
+                std::thread::spawn(move || {
+                    let mut last_check = Instant::now();
+                    while let Ok(mut player) = player.lock() {
+                        if let Some(event) = player.next_event() {
+                            if let Err(e) = cmd_tx.send(BrowserCommand::PlayEvent { event }) {
+                                error!("Failed to send replay event: {}", e);
+                                break;
                             }
                         }
+                        
+                        // Sleep a bit to prevent busy waiting
+                        if last_check.elapsed() < Duration::from_millis(10) {
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        last_check = Instant::now();
                     }
-                    
-                    // Sleep a bit to prevent busy waiting
-                    if last_check.elapsed() < Duration::from_millis(10) {
-                        std::thread::sleep(Duration::from_millis(1));
-                    }
-                    last_check = Instant::now();
-                }
-                info!("Replay completed");
-            });
+                    info!("Replay completed");
+                });
 
-            Ok(())
+                Ok(())
+            } else {
+                Err("No command sender available".to_string())
+            }
         } else {
             Err("Failed to lock player".to_string())
         }
@@ -276,14 +278,18 @@ impl BrowserEngine {
 
         // Initialize WebView
         let browser_clone = Arc::new(Mutex::new(self.clone()));
-        let webview = WebViewBuilder::new(&window)?
-            .with_url("about:blank")?
-            .with_initialization_script(include_str!("../../assets/js/init.js"))
-            .with_ipc_handler(move |_window, msg| {
-                if let Ok(browser) = browser_clone.lock() {
-                    if let Err(e) = browser.handle_ipc_message(&msg) {
-                        error!("Failed to handle IPC message: {}", e);
-                    }
+        let webview = WebViewBuilder::new(&window)
+            .with_bounds(wry::Rect {
+                x: 0_i32,
+                y: 40 as i32,
+                width: window.inner_size().width,
+                height: window.inner_size().height.saturating_sub(40),
+            })
+            .with_initialization_script(include_str!("../templates/window_chrome.js"))
+            .with_html(include_str!("../templates/window_chrome.html"))?
+            .with_ipc_handler(move |msg: String| {
+                if let Ok(cmd) = serde_json::from_str::<BrowserCommand>(&msg) {
+                    let _ = cmd_tx.send(cmd);
                 }
             })
             .build()?;
@@ -324,6 +330,22 @@ impl BrowserEngine {
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Wait;
 
+            match event {
+                Event::WindowEvent { event, .. } => {
+                    match event {
+                        WindowEvent::CloseRequested => {
+                            *control_flow = ControlFlow::Exit;
+                        }
+                        _ => {
+                            if let Err(e) = browser.handle_window_event(&event, &window) {
+                                error!("Failed to handle window event: {}", e);
+                            }
+                        }
+                    }
+                }
+                _ => (),
+            }
+
             // Process any pending commands
             if let Ok(cmd) = cmd_rx.try_recv() {
                 if let Err(e) = browser.handle_command(cmd) {
@@ -340,29 +362,34 @@ impl BrowserEngine {
                         },
                         TabCommand::UpdateTitle { id, title } => {
                             tab_bar.update_tab_title(id, &title);
+                        },
+                        TabCommand::Create { url } => {
+                            if let Ok(mut tabs) = browser.tabs.lock() {
+                                let id = tabs.create_tab(url.clone());
+                                browser.publish_event(BrowserEvent::TabCreated { 
+                                    id,
+                                    url: url.clone() 
+                                }).unwrap_or_else(|e| error!("Failed to publish tab created event: {}", e));
+                            }
+                        },
+                        TabCommand::Close { id } => {
+                            if let Ok(mut tabs) = browser.tabs.lock() {
+                                if tabs.close_tab(id) {
+                                    browser.publish_event(BrowserEvent::TabClosed { id })
+                                        .unwrap_or_else(|e| error!("Failed to publish tab closed event: {}", e));
+                                }
+                            }
+                        },
+                        TabCommand::Switch { id } => {
+                            if let Ok(mut tabs) = browser.tabs.lock() {
+                                if tabs.switch_to_tab(id) {
+                                    browser.publish_event(BrowserEvent::TabActivated { id })
+                                        .unwrap_or_else(|e| error!("Failed to publish tab activated event: {}", e));
+                                }
+                            }
                         }
                     }
                 }
-            }
-
-            match event {
-                Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
-                    *control_flow = ControlFlow::Exit
-                },
-                Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
-                    if let Some(content_view) = &browser.content_view {
-                        if let Ok(view) = content_view.lock() {
-                            let tab_height: u32 = 40;
-                            view.set_bounds(wry::Rect {
-                                x: 0,
-                                y: tab_height as i32,
-                                width: size.width,
-                                height: size.height.saturating_sub(tab_height),
-                            });
-                        }
-                    }
-                },
-                _ => (),
             }
         });
     }
@@ -398,8 +425,8 @@ impl BrowserEngine {
         // Load the URL if this is the active tab
         if let Ok(tabs) = self.tabs.lock() {
             if let Some(tab) = tabs.get_tab(id) {
-                if tab.is_active {
-                    self.update_tab_content(id, url)?;
+                if Some(id) == tabs.active_tab {
+                    // Handle active tab
                 }
             }
         }
@@ -429,7 +456,7 @@ impl BrowserEngine {
         // Get the next active tab ID before closing
         let next_active_id = if let Ok(tabs) = self.tabs.lock() {
             if let Some(tab) = tabs.get_tab(id) {
-                if tab.is_active {
+                if Some(id) == tabs.active_tab {
                     // Find another tab to activate
                     tabs.get_all_tabs().iter()
                         .find(|t| t.id != id)
@@ -623,7 +650,7 @@ impl BrowserEngine {
                 tab.url = url.to_string();
                 
                 // If this is the active tab, update the WebView
-                if tab.is_active {
+                if Some(id) == tabs.active_tab {
                     if let Some(view) = &self.content_view {
                         if let Ok(view) = view.lock() {
                             view.load_url(url);
@@ -665,6 +692,77 @@ impl BrowserEngine {
             Ok(())
         } else {
             Err("Failed to lock tab manager".to_string())
+        }
+    }
+
+    fn create_content_view(&mut self, window: &Window) -> Result<(), String> {
+        let tab_height: u32 = 40; // Match the tab bar height
+
+        let webview = WebViewBuilder::new(window)
+            .with_bounds(wry::Rect {
+                x: 0_i32,
+                y: tab_height as i32,
+                width: window.inner_size().width,
+                height: window.inner_size().height.saturating_sub(tab_height),
+            })
+            .with_initialization_script(include_str!("../templates/window_chrome.js"))
+            .with_html(include_str!("../templates/window_chrome.html"))?
+            .build()?;
+
+        self.content_view = Some(Arc::new(Mutex::new(webview)));
+        Ok(())
+    }
+
+    fn update_webview_bounds(&self, window: &Window) {
+        let tab_height: u32 = 40;
+
+        // Update tab bar bounds
+        if let Some(ref tab_bar) = self.tab_bar {
+            tab_bar.update_bounds(window);
+        }
+
+        // Update content view bounds
+        if let Some(ref content_view) = self.content_view {
+            if let Ok(view) = content_view.lock() {
+                view.set_bounds(wry::Rect {
+                    x: 0_i32,
+                    y: tab_height as i32,
+                    width: window.inner_size().width,
+                    height: window.inner_size().height.saturating_sub(tab_height),
+                });
+            }
+        }
+    }
+
+    fn handle_window_event(&mut self, event: &WindowEvent, window: &Window) -> Result<(), String> {
+        match event {
+            WindowEvent::Resized(size) => {
+                // Update both tab bar and content view bounds
+                let tab_height: u32 = 40;
+                
+                // Update tab bar bounds
+                if let Some(ref tab_bar) = self.tab_bar {
+                    tab_bar.update_bounds(window);
+                }
+
+                // Update content view bounds
+                if let Some(ref content_view) = self.content_view {
+                    if let Ok(view) = content_view.lock() {
+                        view.set_bounds(wry::Rect {
+                            x: 0_i32,
+                            y: tab_height as i32,
+                            width: size.width,
+                            height: size.height.saturating_sub(tab_height),
+                        });
+                    }
+                }
+                Ok(())
+            }
+            WindowEvent::CloseRequested => {
+                // Set control flow to exit in the event loop
+                Ok(())
+            }
+            _ => Ok(())
         }
     }
 }

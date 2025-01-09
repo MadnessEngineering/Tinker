@@ -69,7 +69,7 @@ impl TabBar {
         }
     }
 
-    pub fn update_tab_url(&self, id: u32, url: &str) {
+    pub fn update_tab_url(&self, id: usize, url: &str) {
         if let Ok(webview) = self.webview.lock() {
             let js = format!(
                 r#"
@@ -85,7 +85,7 @@ impl TabBar {
         }
     }
 
-    pub fn update_tab_title(&self, id: u32, title: &str) {
+    pub fn update_tab_title(&self, id: usize, title: &str) {
         if let Ok(webview) = self.webview.lock() {
             let js = format!(
                 r#"
@@ -106,8 +106,8 @@ impl TabBar {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TabCommand {
     Create { url: String },
-    Close { id: u32 },
-    Switch { id: u32 },
-    UpdateUrl { id: u32, url: String },
-    UpdateTitle { id: u32, title: String },
+    Close { id: usize },
+    Switch { id: usize },
+    UpdateUrl { id: usize, url: String },
+    UpdateTitle { id: usize, title: String },
 } 
