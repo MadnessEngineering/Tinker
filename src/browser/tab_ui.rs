@@ -108,4 +108,6 @@ pub enum TabCommand {
     Create { url: String },
     Close { id: u32 },
     Switch { id: u32 },
+    UpdateUrl { id: u32, url: String },
+    UpdateTitle { id: u32, title: String },
 } 

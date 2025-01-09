@@ -29,7 +29,7 @@ use self::{
 };
 
 #[derive(Debug)]
-enum BrowserCommand {
+pub enum BrowserCommand {
     Navigate { url: String },
     CreateTab { url: String },
     CloseTab { id: usize },
@@ -76,6 +76,12 @@ impl BrowserEngine {
     }
 
     fn publish_event(&self, event: BrowserEvent) -> Result<(), String> {
+        // First, add to event viewer for monitoring
+        if let Ok(mut viewer) = self.event_viewer.lock() {
+            viewer.add_event(event.clone());
+        }
+
+        // Then publish to event system if available
         if let Some(events) = &self.events {
             if let Ok(mut events) = events.lock() {
                 events.publish(event)
@@ -214,361 +220,89 @@ impl BrowserEngine {
         if let Ok(mut tabs) = self.tabs.lock() {
             if tabs.get_all_tabs().is_empty() {
                 let id = tabs.create_tab("about:blank".to_string());
-
-                // Create the initial WebView with proper positioning
-                let content_view = {
-                    let events = self.events.clone();
-                    let tab_height: u32 = 40; // Match the tab bar height
-
-                    let view = WebViewBuilder::new(&window)
-                        .with_bounds(wry::Rect {
-                            x: 0_i32,
-                            y: tab_height as i32,
-                            width: window.inner_size().width,
-                            height: window.inner_size().height.saturating_sub(tab_height),
-                        })
-                        .with_url("about:blank")
-                        .map_err(|e| {
-                            error!("Failed to set initial WebView URL: {}", e);
-                            Box::new(e) as Box<dyn std::error::Error>
-                        })?
-                        .with_initialization_script(
-                            r#"
-                            window.addEventListener('DOMContentLoaded', () => { 
-                                document.body.style.backgroundColor = '#ffffff';
-                                document.body.style.marginTop = '40px';
-                                window.addEventListener('load', () => {
-                                    window.ipc.postMessage(JSON.stringify({
-                                        type: 'page_loaded',
-                                        url: window.location.href
-                                    }));
-                                });
-                                const observer = new MutationObserver(() => {
-                                    window.ipc.postMessage(JSON.stringify({
-                                        type: 'title_changed',
-                                        title: document.title
-                                    }));
-                                });
-                                observer.observe(document.querySelector('title'), { 
-                                    childList: true 
-                                });
-                            });
-                            "#
-                        )
-                        .with_ipc_handler(move |msg: String| {
-                            if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&msg) {
-                                match msg["type"].as_str() {
-                                    Some("page_loaded") => {
-                                        if let Some(url) = msg["url"].as_str() {
-                                            debug!("Page loaded: {}", url);
-                                            if let Some(events) = &events {
-                                                if let Ok(mut events) = events.lock() {
-                                                    let _ = events.publish(BrowserEvent::PageLoaded {
-                                                        url: url.to_string()
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Some("title_changed") => {
-                                        if let Some(title) = msg["title"].as_str() {
-                                            debug!("Title changed: {}", title);
-                                            if let Some(events) = &events {
-                                                if let Ok(mut events) = events.lock() {
-                                                    let _ = events.publish(BrowserEvent::TitleChanged {
-                                                        title: title.to_string()
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        })
-                        .build()?;
-
-                    Arc::new(Mutex::new(view))
-                };
-
-                self.content_view = Some(content_view.clone());
+                self.publish_event(BrowserEvent::TabCreated { 
+                    id,
+                    url: "about:blank".to_string()
+                })?;
+                info!("Created initial tab {}", id);
             }
         }
 
-        // Add existing tabs to the UI
-        if let Ok(mut tabs) = self.tabs.lock() {
-            for tab in tabs.get_all_tabs() {
-                if let Some(ref bar) = &self.tab_bar {
-                    bar.add_tab(tab.id.try_into().unwrap(), &tab.title, &tab.url);
-                }
-            }
-            if let Some(active_tab) = tabs.get_active_tab() {
-                if let Some(ref bar) = &self.tab_bar {
-                    bar.set_active_tab(active_tab.id.try_into().unwrap());
-                }
+        // Store command sender for event system
+        let cmd_tx_clone = cmd_tx.clone();
+        if let Some(events) = &self.events {
+            if let Ok(mut events) = events.lock() {
+                events.set_command_sender(cmd_tx_clone);
             }
         }
 
-        // Set up event handling
-        let events = self.events.clone();
-        let recorder = self.recorder.clone();
-        let event_viewer = self.event_viewer.clone();
-        let tabs = self.tabs.clone();
-        let tab_bar = self.tab_bar.clone();
-        let window = self.window.take();
-
-        // Move content_view into the event loop
-        let mut content_view = self.content_view.clone();
-
-        // Set up the event loop
+        let mut browser = self;
         event_loop.run(move |event, _, control_flow| {
-            match event {
-                Event::NewEvents(_) => {
-                    *control_flow = ControlFlow::Wait;
-                }
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
-                    // Clean up resources before exiting
-                    content_view = None;
-                    if let Some(window) = &window {
-                        window.set_visible(false);
-                    }
-                    *control_flow = ControlFlow::Exit;
-                }
-                Event::WindowEvent {
-                    event: WindowEvent::Resized(new_size),
-                    ..
-                } => {
-                    if let Some(window) = &window {
-                        // Update tab bar bounds
-                        if let Some(ref bar) = &tab_bar {
-                            bar.update_bounds(window);
-                        }
+            *control_flow = ControlFlow::Wait;
 
-                        // Update content view bounds
-                        if let Some(ref content_view) = content_view {
-                            if let Ok(content_view) = content_view.lock() {
-                                content_view.set_bounds(wry::Rect {
-                                    x: 0_i32,
-                                    y: 40_i32,
-                                    width: new_size.width,
-                                    height: new_size.height.saturating_sub(40),
-                                });
-                            }
+            // Process any pending commands
+            if let Ok(cmd) = cmd_rx.try_recv() {
+                if let Err(e) = browser.handle_command(cmd) {
+                    error!("Failed to handle command: {}", e);
+                }
+            }
+
+            // Process any pending tab commands
+            if let Ok(cmd) = tab_rx.try_recv() {
+                if let Some(ref tab_bar) = browser.tab_bar {
+                    match cmd {
+                        TabCommand::UpdateUrl { id, url } => {
+                            tab_bar.update_tab_url(id, &url);
+                        },
+                        TabCommand::UpdateTitle { id, title } => {
+                            tab_bar.update_tab_title(id, &title);
                         }
                     }
                 }
-                Event::LoopDestroyed => {
-                    // Clean up resources when the event loop is destroyed
-                    content_view = None;
-                    if let Some(window) = &window {
-                        window.set_visible(false);
+            }
+
+            match event {
+                Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                    *control_flow = ControlFlow::Exit
+                },
+                Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
+                    if let Some(content_view) = &browser.content_view {
+                        if let Ok(view) = content_view.lock() {
+                            let tab_height: u32 = 40;
+                            view.set_bounds(wry::Rect {
+                                x: 0,
+                                y: tab_height as i32,
+                                width: size.width,
+                                height: size.height.saturating_sub(tab_height),
+                            });
+                        }
                     }
-                }
+                },
                 _ => (),
             }
-
-            // Handle tab commands
-            while let Ok(cmd) = tab_rx.try_recv() {
-                match cmd {
-                    TabCommand::Create { url } => {
-                        if let Ok(mut tabs) = tabs.lock() {
-                            let id = tabs.create_tab(url.clone());
-                            if let Some(ref bar) = &tab_bar {
-                                bar.add_tab(id.try_into().unwrap(), "New Tab", &url);
-                                bar.set_active_tab(id.try_into().unwrap());
-                            }
-                            if let Some(events) = &events {
-                                if let Ok(mut events) = events.lock() {
-                                    let _ = events.publish(BrowserEvent::TabCreated { id });
-                                }
-                            }
-                        }
-                    }
-                    TabCommand::Close { id } => {
-                        if let Ok(mut tabs) = tabs.lock() {
-                            if tabs.close_tab(id.try_into().unwrap()) {
-                                if let Some(ref bar) = &tab_bar {
-                                    bar.remove_tab(id.try_into().unwrap());
-
-                                    // Get the new active tab
-                                    if let Some(active_tab) = tabs.get_active_tab() {
-                                        bar.set_active_tab(active_tab.id.try_into().unwrap());
-
-                                        // Update content view
-                                        if let Some(webview) = tabs.get_tab_webview(active_tab.id) {
-                                            content_view = Some(webview.clone());
-
-                                            // Ensure proper positioning
-                                            if let Some(window) = &window {
-                                                if let Ok(view) = webview.lock() {
-                                                    view.set_bounds(wry::Rect {
-                                                        x: 0_i32,
-                                                        y: 40_i32, // Tab bar height
-                                                        width: window.inner_size().width,
-                                                        height: window.inner_size().height.saturating_sub(40),
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Ensure tab bar stays visible
-                                if let Some(ref bar) = &tab_bar {
-                                    if let Some(window) = &window {
-                                        bar.update_bounds(window);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    TabCommand::Switch { id } => {
-                        if let Ok(mut tabs) = tabs.lock() {
-                            if tabs.switch_to_tab(id.try_into().unwrap()) {
-                                if let Some(ref bar) = &tab_bar {
-                                    bar.set_active_tab(id.try_into().unwrap());
-                                }
-
-                                // Switch to the tab's WebView
-                                if let Some(webview) = tabs.get_tab_webview(id.try_into().unwrap()) {
-                                    content_view = Some(webview.clone());
-                                }
-
-                                let _ = self.publish_event(BrowserEvent::TabSwitched { id: id.try_into().unwrap() });
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Handle browser commands
-            while let Ok(cmd) = cmd_rx.try_recv() {
-                match cmd {
-                    BrowserCommand::Navigate { url } => {
-                        if let Some(ref view) = content_view {
-                            if let Ok(view) = view.lock() {
-                                view.load_url(&url);
-                            }
-                        }
-                    }
-                    BrowserCommand::CreateTab { url } => {
-                        if let Ok(mut tabs) = tabs.lock() {
-                            let id = tabs.create_tab(url.clone());
-                            info!("Created new tab {} with URL: {}", id, url);
-
-                            // Update tab UI
-                            if let Some(ref bar) = &tab_bar {
-                                bar.add_tab(id.try_into().unwrap(), "New Tab", &url);
-                                bar.set_active_tab(id.try_into().unwrap());
-                            }
-
-                            // Create a new WebView for the tab
-                            if let Some(window) = &window {
-                                let events = events.clone();
-                                match WebViewBuilder::new(&**window)
-                                    .with_url(&url)
-                                    .map_err(|e| {
-                                        error!("Failed to set WebView URL: {}", e);
-                                        e
-                                    })
-                                    .map(|builder| {
-                                        let events = events.clone();
-                                        builder
-                                            .with_initialization_script(
-                                                r#"
-                                                window.addEventListener('DOMContentLoaded', () => { 
-                                                    document.body.style.backgroundColor = '#ffffff';
-                                                    window.addEventListener('load', () => {
-                                                        window.ipc.postMessage(JSON.stringify({
-                                                            type: 'page_loaded',
-                                                            url: window.location.href
-                                                        }));
-                                                    });
-                                                    const observer = new MutationObserver(() => {
-                                                        window.ipc.postMessage(JSON.stringify({
-                                                            type: 'title_changed',
-                                                            title: document.title
-                                                        }));
-                                                    });
-                                                    observer.observe(document.querySelector('title'), { 
-                                                        childList: true 
-                                                    });
-                                                });
-                                                "#
-                                            )
-                                            .with_ipc_handler(move |msg: String| {
-                                                if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&msg) {
-                                                    match msg["type"].as_str() {
-                                                        Some("page_loaded") => {
-                                                            if let Some(url) = msg["url"].as_str() {
-                                                                debug!("Page loaded: {}", url);
-                                                                if let Some(events) = &events {
-                                                                    if let Ok(mut events) = events.lock() {
-                                                                        let _ = events.publish(BrowserEvent::PageLoaded {
-                                                                            url: url.to_string()
-                                                                        });
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        Some("title_changed") => {
-                                                            if let Some(title) = msg["title"].as_str() {
-                                                                debug!("Title changed: {}", title);
-                                                                if let Some(events) = &events {
-                                                                    if let Ok(mut events) = events.lock() {
-                                                                        let _ = events.publish(BrowserEvent::TitleChanged {
-                                                                            title: title.to_string()
-                                                                        });
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        _ => {}
-                                                    }
-                                                }
-                                            })
-                                            .build()
-                                    }) {
-                                    Ok(Ok(view)) => {
-                                        let webview = Arc::new(Mutex::new(view));
-                                        tabs.set_tab_webview(id, webview.clone());
-                                        content_view = Some(webview);
-                                    }
-                                    _ => error!("Failed to create WebView for tab {}", id),
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        })
+        });
     }
 
     pub fn create_tab(&mut self, url: &str) -> Result<usize, String> {
         if let Ok(mut tabs) = self.tabs.lock() {
             let id = tabs.create_tab(url.to_string());
-            self.publish_event(BrowserEvent::TabCreated { id })?;
-            self.publish_event(BrowserEvent::TabUrlChanged {
+            self.publish_event(BrowserEvent::TabCreated { 
                 id,
-                url: url.to_string(),
+                url: url.to_string() 
             })?;
             Ok(id)
         } else {
-            Err("Failed to lock tabs".to_string())
+            Err("Failed to lock tab manager".to_string())
         }
     }
 
     pub fn switch_to_tab(&mut self, id: usize) -> Result<(), String> {
         if let Ok(mut tabs) = self.tabs.lock() {
             if tabs.switch_to_tab(id) {
-                self.publish_event(BrowserEvent::TabSwitched { id })?;
+                self.publish_event(BrowserEvent::TabActivated { id })?;
                 Ok(())
             } else {
-                Err("Tab not found".to_string())
+                Err(format!("Failed to switch to tab {}", id))
             }
         } else {
             Err("Failed to lock tabs".to_string())
@@ -585,6 +319,93 @@ impl BrowserEngine {
             }
         } else {
             Err("Failed to lock tabs".to_string())
+        }
+    }
+
+    pub fn get_recent_events(&self, count: usize) -> Vec<String> {
+        if let Ok(viewer) = self.event_viewer.lock() {
+            viewer.get_recent_events(count)
+                .iter()
+                .map(|entry| format!("[{}] {:?}", entry.timestamp.format("%H:%M:%S"), entry.event))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub fn clear_event_history(&self) {
+        if let Ok(mut viewer) = self.event_viewer.lock() {
+            viewer.clear();
+        }
+    }
+
+    fn handle_command(&mut self, command: BrowserCommand) -> Result<(), String> {
+        match command {
+            BrowserCommand::Navigate { url } => {
+                self.navigate(&url)
+            },
+            BrowserCommand::CreateTab { url } => {
+                if let Ok(mut tabs) = self.tabs.lock() {
+                    let id = tabs.create_tab(url.clone());
+                    self.publish_event(BrowserEvent::TabCreated { 
+                        id,
+                        url: url.clone() 
+                    })?;
+                    Ok(())
+                } else {
+                    Err("Failed to lock tab manager".to_string())
+                }
+            },
+            BrowserCommand::CloseTab { id } => {
+                if let Ok(mut tabs) = self.tabs.lock() {
+                    if tabs.close_tab(id) {
+                        self.publish_event(BrowserEvent::TabClosed { id })?;
+                        Ok(())
+                    } else {
+                        Err(format!("Failed to close tab {}", id))
+                    }
+                } else {
+                    Err("Failed to lock tab manager".to_string())
+                }
+            },
+            BrowserCommand::SwitchTab { id } => {
+                if let Ok(mut tabs) = self.tabs.lock() {
+                    if tabs.switch_to_tab(id) {
+                        self.publish_event(BrowserEvent::TabActivated { id })?;
+                        Ok(())
+                    } else {
+                        Err(format!("Failed to switch to tab {}", id))
+                    }
+                } else {
+                    Err("Failed to lock tab manager".to_string())
+                }
+            },
+            BrowserCommand::RecordEvent { event } => {
+                if let Ok(mut recorder) = self.recorder.lock() {
+                    recorder.record_event(event);
+                    Ok(())
+                } else {
+                    Err("Failed to lock event recorder".to_string())
+                }
+            },
+            BrowserCommand::PlayEvent { event } => {
+                // Handle the event based on its type
+                match event {
+                    BrowserEvent::Navigation { url } => self.navigate(&url),
+                    BrowserEvent::TabCreated { url, .. } => {
+                        if let Ok(mut tabs) = self.tabs.lock() {
+                            tabs.create_tab(url);
+                            Ok(())
+                        } else {
+                            Err("Failed to lock tab manager".to_string())
+                        }
+                    },
+                    _ => {
+                        // Publish other events directly
+                        self.publish_event(event)
+                    }
+                }
+            }
         }
     }
 }

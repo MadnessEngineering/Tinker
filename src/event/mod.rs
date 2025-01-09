@@ -6,24 +6,30 @@ use tracing::{info, error, debug};
 use std::time::Duration;
 use url::Url;
 use serde_json::json;
+use std::sync::mpsc::Sender;
+use crate::browser::BrowserCommand;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BrowserEvent {
     Navigation { url: String },
-    TabCreated { id: usize },
-    TabClosed { id: usize },
-    TabSwitched { id: usize },
-    TabUrlChanged { id: usize, url: String },
-    TabTitleChanged { id: usize, title: String },
     PageLoaded { url: String },
     TitleChanged { title: String },
+    TabCreated { id: usize, url: String },
+    TabClosed { id: usize },
+    TabActivated { id: usize },
+    TabUrlChanged { id: usize, url: String },
+    TabTitleChanged { id: usize, title: String },
     Error { message: String },
+    CommandReceived { command: String },
+    CommandExecuted { command: String, success: bool },
 }
 
 pub struct EventSystem {
     pub client: Option<Client>,
     pub options: MqttOptions,
     pub broker_url: String,
+    client_id: String,
+    command_sender: Option<Sender<BrowserCommand>>,
 }
 
 impl EventSystem {
@@ -58,6 +64,8 @@ impl EventSystem {
             client: None,
             options,
             broker_url: broker_url.to_string(),
+            client_id: client_id.to_string(),
+            command_sender: None,
         }
     }
 
@@ -102,14 +110,16 @@ impl EventSystem {
     pub fn publish(&mut self, event: BrowserEvent) -> Result<(), Box<dyn std::error::Error>> {
         let topic = match &event {
             BrowserEvent::Navigation { .. } => "browser/navigation",
-            BrowserEvent::TabCreated { .. } => "browser/tabs/created",
-            BrowserEvent::TabClosed { .. } => "browser/tabs/closed",
-            BrowserEvent::TabSwitched { .. } => "browser/tabs/switched",
             BrowserEvent::PageLoaded { .. } => "browser/page/loaded",
             BrowserEvent::TitleChanged { .. } => "browser/page/title",
-            BrowserEvent::TabTitleChanged { .. } => "browser/tabs/title",
+            BrowserEvent::TabCreated { .. } => "browser/tabs/created",
+            BrowserEvent::TabClosed { .. } => "browser/tabs/closed",
+            BrowserEvent::TabActivated { .. } => "browser/tabs/activated",
             BrowserEvent::TabUrlChanged { .. } => "browser/tabs/url",
+            BrowserEvent::TabTitleChanged { .. } => "browser/tabs/title",
             BrowserEvent::Error { .. } => "browser/error",
+            BrowserEvent::CommandReceived { .. } => "browser/command/received",
+            BrowserEvent::CommandExecuted { .. } => "browser/command/executed",
         };
         let payload = serde_json::to_string(&event)?;
 
@@ -154,6 +164,26 @@ impl EventSystem {
         } else {
             error!("Cannot subscribe: MQTT client not connected");
             Err("MQTT client not connected".into())
+        }
+    }
+
+    pub fn set_command_sender(&mut self, sender: Sender<BrowserCommand>) {
+        self.command_sender = Some(sender);
+    }
+
+    pub fn get_topic(&self, event: &BrowserEvent) -> &'static str {
+        match event {
+            BrowserEvent::Navigation { .. } => "browser/navigation",
+            BrowserEvent::PageLoaded { .. } => "browser/page/loaded",
+            BrowserEvent::TitleChanged { .. } => "browser/page/title",
+            BrowserEvent::TabCreated { .. } => "browser/tabs/created",
+            BrowserEvent::TabClosed { .. } => "browser/tabs/closed",
+            BrowserEvent::TabActivated { .. } => "browser/tabs/activated",
+            BrowserEvent::TabUrlChanged { .. } => "browser/tabs/url",
+            BrowserEvent::TabTitleChanged { .. } => "browser/tabs/title",
+            BrowserEvent::Error { .. } => "browser/error",
+            BrowserEvent::CommandReceived { .. } => "browser/command/received",
+            BrowserEvent::CommandExecuted { .. } => "browser/command/executed",
         }
     }
 }
