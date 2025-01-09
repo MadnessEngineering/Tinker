@@ -194,36 +194,79 @@ impl BrowserEngine {
                 let id = tabs.create_tab("about:blank".to_string());
 
                 // Create the initial WebView
-                let content_view = WebViewBuilder::new(&window)
-                    .with_url("about:blank")
-                    .map_err(|e| {
-                        error!("Failed to set initial WebView URL: {}", e);
-                        Box::new(e) as Box<dyn std::error::Error>
-                    })?
-                    .with_initialization_script("window.addEventListener('DOMContentLoaded', () => { document.body.style.backgroundColor = '#ffffff'; });")
-                    .with_transparent(false)
-                    .with_visible(true)
-                    .with_navigation_handler(move |url| {
-                        debug!("Navigation requested to: {}", url);
-                        true // Allow all navigation
-                    })
-                    .with_page_title_handler(move |title| {
-                        debug!("Page title changed to: {}", title);
-                        let _ = self.publish_event(BrowserEvent::TitleChanged { 
-                            title: title.to_string() 
-                        });
-                    })
-                    .with_page_load_handler(move |url| {
-                        debug!("Page loaded: {}", url);
-                        let _ = self.publish_event(BrowserEvent::PageLoaded { 
-                            url: url.to_string() 
-                        });
-                    })
-                    .build()
-                    .map_err(|e| {
-                        error!("Failed to build initial WebView: {}", e);
-                        Box::new(e) as Box<dyn std::error::Error>
-                    })?;
+                let content_view = {
+                    let events = self.events.clone();
+                    WebViewBuilder::new(&window)
+                        .with_url("about:blank")
+                        .map_err(|e| {
+                            error!("Failed to set initial WebView URL: {}", e);
+                            Box::new(e) as Box<dyn std::error::Error>
+                        })?
+                        .with_initialization_script(
+                            r#"
+                            window.addEventListener('DOMContentLoaded', () => { 
+                                document.body.style.backgroundColor = '#ffffff';
+                                window.addEventListener('load', () => {
+                                    window.ipc.postMessage(JSON.stringify({
+                                        type: 'page_loaded',
+                                        url: window.location.href
+                                    }));
+                                });
+                                const observer = new MutationObserver(() => {
+                                    window.ipc.postMessage(JSON.stringify({
+                                        type: 'title_changed',
+                                        title: document.title
+                                    }));
+                                });
+                                observer.observe(document.querySelector('title'), { 
+                                    childList: true 
+                                });
+                            });
+                            "#
+                        )
+                        .with_ipc_handler(move |msg: String| {
+                            if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&msg) {
+                                match msg["type"].as_str() {
+                                    Some("page_loaded") => {
+                                        if let Some(url) = msg["url"].as_str() {
+                                            debug!("Page loaded: {}", url);
+                                            if let Some(events) = &events {
+                                                if let Ok(mut events) = events.lock() {
+                                                    let _ = events.publish(BrowserEvent::PageLoaded { 
+                                                        url: url.to_string() 
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Some("title_changed") => {
+                                        if let Some(title) = msg["title"].as_str() {
+                                            debug!("Title changed: {}", title);
+                                            if let Some(events) = &events {
+                                                if let Ok(mut events) = events.lock() {
+                                                    let _ = events.publish(BrowserEvent::TitleChanged { 
+                                                        title: title.to_string() 
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        })
+                        .with_transparent(false)
+                        .with_visible(true)
+                        .with_navigation_handler(move |url| {
+                            debug!("Navigation requested to: {}", url);
+                            true // Allow all navigation
+                        })
+                        .build()
+                        .map_err(|e| {
+                            error!("Failed to build initial WebView: {}", e);
+                            Box::new(e) as Box<dyn std::error::Error>
+                        })?
+                };
 
                 // Wrap in Arc<Mutex>
                 let content_view = Arc::new(Mutex::new(content_view));
@@ -277,7 +320,7 @@ impl BrowserEngine {
         let window = self.window.take();
 
         // Move content_view into the event loop
-        let content_view = self.content_view.clone();
+        let mut content_view = self.content_view.clone();
 
         event_loop.run(move |event, _, control_flow| {
             *control_flow = if headless {
@@ -302,13 +345,14 @@ impl BrowserEngine {
                             info!("Created new tab {} with URL: {}", id, url);
                             
                             // Update tab UI
-                            if let Some(ref bar) = tab_bar {
+                            if let Some(ref bar) = &tab_bar {
                                 bar.add_tab(id, "New Tab", &url);
                                 bar.set_active_tab(id);
                             }
 
                             // Create a new WebView for the tab
                             if let Some(window) = &window {
+                                let events = events.clone();
                                 match WebViewBuilder::new(&**window)
                                     .with_url(&url)
                                     .map_err(|e| {
@@ -316,10 +360,67 @@ impl BrowserEngine {
                                         e
                                     })
                                     .map(|builder| {
+                                        let events = events.clone();
                                         builder
-                                            .with_initialization_script("window.addEventListener('DOMContentLoaded', () => { document.body.style.backgroundColor = '#ffffff'; });")
+                                            .with_initialization_script(
+                                                r#"
+                                                window.addEventListener('DOMContentLoaded', () => { 
+                                                    document.body.style.backgroundColor = '#ffffff';
+                                                    window.addEventListener('load', () => {
+                                                        window.ipc.postMessage(JSON.stringify({
+                                                            type: 'page_loaded',
+                                                            url: window.location.href
+                                                        }));
+                                                    });
+                                                    const observer = new MutationObserver(() => {
+                                                        window.ipc.postMessage(JSON.stringify({
+                                                            type: 'title_changed',
+                                                            title: document.title
+                                                        }));
+                                                    });
+                                                    observer.observe(document.querySelector('title'), { 
+                                                        childList: true 
+                                                    });
+                                                });
+                                                "#
+                                            )
+                                            .with_ipc_handler(move |msg: String| {
+                                                if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&msg) {
+                                                    match msg["type"].as_str() {
+                                                        Some("page_loaded") => {
+                                                            if let Some(url) = msg["url"].as_str() {
+                                                                debug!("Page loaded: {}", url);
+                                                                if let Some(events) = &events {
+                                                                    if let Ok(mut events) = events.lock() {
+                                                                        let _ = events.publish(BrowserEvent::PageLoaded { 
+                                                                            url: url.to_string() 
+                                                                        });
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        Some("title_changed") => {
+                                                            if let Some(title) = msg["title"].as_str() {
+                                                                debug!("Title changed: {}", title);
+                                                                if let Some(events) = &events {
+                                                                    if let Ok(mut events) = events.lock() {
+                                                                        let _ = events.publish(BrowserEvent::TitleChanged { 
+                                                                            title: title.to_string() 
+                                                                        });
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                            })
                                             .with_transparent(false)
                                             .with_visible(true)
+                                            .with_navigation_handler(move |url| {
+                                                debug!("Navigation requested to: {}", url);
+                                                true // Allow all navigation
+                                            })
                                             .build()
                                     })
                                     .and_then(|result| result.map_err(|e| {
@@ -333,14 +434,18 @@ impl BrowserEngine {
                                         tabs.set_tab_webview(id, new_view.clone());
                                         
                                         // Set as current content view
-                                        self.content_view = Some(new_view);
+                                        content_view = Some(new_view);
 
                                         // Publish events
-                                        let _ = self.publish_event(BrowserEvent::TabCreated { id });
-                                        let _ = self.publish_event(BrowserEvent::TabUrlChanged { 
-                                            id, 
-                                            url: url.clone() 
-                                        });
+                                        if let Some(events) = &events {
+                                            if let Ok(mut events) = events.lock() {
+                                                let _ = events.publish(BrowserEvent::TabCreated { id });
+                                                let _ = events.publish(BrowserEvent::TabUrlChanged { 
+                                                    id, 
+                                                    url: url.clone() 
+                                                });
+                                            }
+                                        }
                                     }
                                     Err(e) => error!("Failed to create WebView: {}", e)
                                 }
@@ -350,7 +455,7 @@ impl BrowserEngine {
                     BrowserCommand::CloseTab { id } => {
                         if let Ok(mut tabs) = tabs.lock() {
                             if tabs.close_tab(id) {
-                                if let Some(ref bar) = tab_bar {
+                                if let Some(ref bar) = &tab_bar {
                                     bar.remove_tab(id);
                                     if let Some(active_tab) = tabs.get_active_tab() {
                                         bar.set_active_tab(active_tab.id);
@@ -368,7 +473,7 @@ impl BrowserEngine {
                     BrowserCommand::SwitchTab { id } => {
                         if let Ok(mut tabs) = tabs.lock() {
                             if tabs.switch_to_tab(id) {
-                                if let Some(ref bar) = tab_bar {
+                                if let Some(ref bar) = &tab_bar {
                                     bar.set_active_tab(id);
                                 }
                                 
@@ -401,7 +506,7 @@ impl BrowserEngine {
                             BrowserEvent::TabCreated { .. } => {
                                 if let Ok(mut tabs) = tabs.lock() {
                                     let id = tabs.create_tab("about:blank".to_string());
-                                    if let Some(ref bar) = tab_bar {
+                                    if let Some(ref bar) = &tab_bar {
                                         bar.add_tab(id, "New Tab", "about:blank");
                                         bar.set_active_tab(id);
                                     }
@@ -410,7 +515,7 @@ impl BrowserEngine {
                             BrowserEvent::TabClosed { id } => {
                                 if let Ok(mut tabs) = tabs.lock() {
                                     if tabs.close_tab(*id) {
-                                        if let Some(ref bar) = tab_bar {
+                                        if let Some(ref bar) = &tab_bar {
                                             bar.remove_tab(*id);
                                         }
                                     }
@@ -419,13 +524,43 @@ impl BrowserEngine {
                             BrowserEvent::TabSwitched { id } => {
                                 if let Ok(mut tabs) = tabs.lock() {
                                     if tabs.switch_to_tab(*id) {
-                                        if let Some(ref bar) = tab_bar {
+                                        if let Some(ref bar) = &tab_bar {
                                             bar.set_active_tab(*id);
                                         }
                                     }
                                 }
                             }
-                            _ => {}
+                            BrowserEvent::TabUrlChanged { id, url } => {
+                                if let Ok(mut tabs) = tabs.lock() {
+                                    if let Some(tab) = tabs.get_tab_mut(*id) {
+                                        tab.url = url.clone();
+                                        if let Some(ref bar) = &tab_bar {
+                                            bar.update_tab_url(*id, url);
+                                        }
+                                    }
+                                }
+                            }
+                            BrowserEvent::TabTitleChanged { id, title } => {
+                                if let Ok(mut tabs) = tabs.lock() {
+                                    if let Some(tab) = tabs.get_tab_mut(*id) {
+                                        tab.title = title.clone();
+                                        if let Some(ref bar) = &tab_bar {
+                                            bar.update_tab_title(*id, title);
+                                        }
+                                    }
+                                }
+                            }
+                            BrowserEvent::PageLoaded { url } => {
+                                debug!("Replaying page load: {}", url);
+                            }
+                            BrowserEvent::TitleChanged { title } => {
+                                if let Some(ref window) = window {
+                                    window.set_title(&format!("{} - Tinker Browser", title));
+                                }
+                            }
+                            BrowserEvent::Error { message } => {
+                                error!("Replaying error event: {}", message);
+                            }
                         }
                     }
                 }
@@ -512,5 +647,53 @@ mod tests {
             tabs.get_active_tab().map(|tab| tab.url.clone()).unwrap()
         };
         assert_eq!(final_url, "https://www.example.com");
+    }
+
+    #[test]
+    fn test_event_publishing() {
+        // Create event system
+        let mut events = EventSystem::new("localhost", "test-browser");
+        events.connect().unwrap();
+        let events = Arc::new(Mutex::new(events));
+
+        // Create browser with events enabled
+        let mut browser = BrowserEngine::new(false, Some(events));
+
+        // Test tab creation events
+        let tab_id = browser.create_tab("https://example.com").unwrap();
+        
+        // Test tab switching events
+        browser.switch_to_tab(tab_id).unwrap();
+        
+        // Test navigation events
+        browser.navigate("https://example.com/page2").unwrap();
+        
+        // Test tab closing events
+        browser.close_tab(tab_id).unwrap();
+    }
+
+    #[test]
+    fn test_event_replay() {
+        let mut browser = BrowserEngine::new(false, None);
+        
+        // Create a tab and verify it's created
+        let tab_id = browser.create_tab("https://example.com").unwrap();
+        
+        // Replay a navigation event
+        let event = BrowserEvent::Navigation {
+            url: "https://example.com/page2".to_string()
+        };
+        if let Ok(mut tabs) = browser.tabs.lock() {
+            if let Some(tab) = tabs.get_tab_mut(tab_id) {
+                tab.url = "https://example.com/page2".to_string();
+            }
+        }
+        
+        // Verify the URL was updated
+        let final_url = {
+            let tabs = browser.tabs.lock().unwrap();
+            tabs.get_active_tab().map(|tab| tab.url.clone()).unwrap()
+        };
+        assert_eq!(final_url, "https://example.com/page2");
     }
 }

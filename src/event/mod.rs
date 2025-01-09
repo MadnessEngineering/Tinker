@@ -79,7 +79,7 @@ impl EventSystem {
             debug!("Publishing event to {}: {}", topic, payload);
             match client.publish(topic, QoS::AtLeastOnce, false, payload.as_bytes()) {
                 Ok(_) => Ok(()),
-                Err(e) => {
+                Err(_) => {
                     // If publish fails, try to reconnect once
                     let _ = self.connect();
                     if let Some(ref mut client) = self.client {
