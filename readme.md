@@ -57,6 +57,8 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
 - 🔄 Added environment variable configuration support
 - 🎯 Improved tab creation with better error handling and UI feedback
 - 🖼️ Fixed window chrome and native controls integration
+- 🏗️ Improved tab bar construction with proper encapsulation
+- 🔄 Enhanced window chrome integration with native controls
 
 ## Lessons Learned
 
@@ -70,6 +72,8 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
 - Error handling should include user feedback
 - WebView creation should be atomic (succeed completely or fail safely)
 - Environment variables should be used for configurable defaults
+- Tab bar construction should use proper encapsulation and initialization
+- Window chrome integration requires careful coordination with native controls
 
 ### Menu System Design
 - Native menu APIs can be inconsistent across platforms
