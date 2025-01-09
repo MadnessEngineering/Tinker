@@ -1,6 +1,16 @@
-0. Lets make sure we're using a trunk branching strategy
-1. Work on the code problem asked, implementing it.
-2. Run any availble tests, such as cargo test where applicable, iterating on it until it builds.
-3. add a section to the readme called "lessons learned" so as we figure things out, we don't forget them later.
-4. After a feature is complete, add our progress to the readme.md file. Add any lessons learned to a section
-5. After successful tests and documentation is updated, add changed files to git and add a detailed commit message. Keep in mind you may need to refrence the commits later to debug complex issues.
+0. Use trunk-based development with feature branches
+1. Work on the code problem asked, implementing it
+2. Run available tests (e.g. 'cargo test') and iterate until successful
+3. Maintain a "Lessons Learned" section in readme.md
+4. Update readme.md with progress after completing features
+5. Git workflow rules:
+   - Always append '| cat' to commands that might trigger a pager (git diff, git log, etc.)
+   - Use --no-pager flag for git commands when possible
+   - Keep commit messages single-line or use multiple -m flags
+   - Include ticket/issue numbers in commit messages when applicable
+   - Write detailed commit messages for future debugging reference
+6. Command execution rules:
+   - Avoid newlines in command strings
+   - Use semicolons or && for multiple commands instead of newlines
+   - Escape special characters in command strings
+   - Set appropriate flags to prevent interactive prompts
