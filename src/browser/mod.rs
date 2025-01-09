@@ -114,6 +114,16 @@ impl BrowserEngine {
         // Then update the WebView
         if let Some(view) = &self.content_view {
             if let Ok(view) = view.lock() {
+                // Send navigation message to WebView
+                let msg = serde_json::json!({
+                    "type": "navigate",
+                    "url": url
+                });
+                if let Err(e) = view.evaluate_script(&format!("window.ipc.handleMessage('{}')", msg.to_string())) {
+                    error!("Failed to send navigation message to WebView: {}", e);
+                }
+                
+                // Load the URL
                 view.load_url(url);
             }
         }
@@ -263,6 +273,32 @@ impl BrowserEngine {
         // Create the tab bar first
         let tab_bar = TabBar::new(&window, tab_tx.clone())?;
         self.tab_bar = Some(tab_bar);
+
+        // Initialize WebView
+        let browser_clone = Arc::new(Mutex::new(self.clone()));
+        let webview = WebViewBuilder::new(&window)?
+            .with_url("about:blank")?
+            .with_initialization_script(include_str!("../../assets/js/init.js"))
+            .with_ipc_handler(move |_window, msg| {
+                if let Ok(browser) = browser_clone.lock() {
+                    if let Err(e) = browser.handle_ipc_message(&msg) {
+                        error!("Failed to handle IPC message: {}", e);
+                    }
+                }
+            })
+            .build()?;
+        
+        // Set initial WebView bounds
+        let size = window.inner_size();
+        let tab_height: u32 = 40;
+        webview.set_bounds(wry::Rect {
+            x: 0,
+            y: tab_height as i32,
+            width: size.width,
+            height: size.height.saturating_sub(tab_height),
+        });
+
+        self.content_view = Some(Arc::new(Mutex::new(webview)));
 
         // Create initial tab if none exists
         if let Ok(mut tabs) = self.tabs.lock() {
@@ -455,6 +491,67 @@ impl BrowserEngine {
                 }
             }
         }
+    }
+
+    fn handle_ipc_message(&self, msg: &str) -> Result<(), String> {
+        let data: serde_json::Value = serde_json::from_str(msg)
+            .map_err(|e| format!("Failed to parse IPC message: {}", e))?;
+
+        match data["type"].as_str() {
+            Some("pageLoaded") => {
+                if let Some(url) = data["url"].as_str() {
+                    self.publish_event(BrowserEvent::PageLoaded {
+                        url: url.to_string(),
+                    })?;
+                }
+            }
+            Some("titleChanged") => {
+                if let Some(title) = data["title"].as_str() {
+                    // Update tab title
+                    if let Ok(mut tabs) = self.tabs.lock() {
+                        if let Some(tab) = tabs.get_active_tab_mut() {
+                            tab.title = title.to_string();
+                            self.publish_event(BrowserEvent::TabTitleChanged {
+                                id: tab.id,
+                                title: title.to_string(),
+                            })?;
+                        }
+                    }
+
+                    // Also publish general title changed event
+                    self.publish_event(BrowserEvent::TitleChanged {
+                        title: title.to_string(),
+                    })?;
+                }
+            }
+            Some("navigation") => {
+                if let Some(url) = data["url"].as_str() {
+                    // Update tab URL
+                    if let Ok(mut tabs) = self.tabs.lock() {
+                        if let Some(tab) = tabs.get_active_tab_mut() {
+                            tab.url = url.to_string();
+                            self.publish_event(BrowserEvent::TabUrlChanged {
+                                id: tab.id,
+                                url: url.to_string(),
+                            })?;
+                        }
+                    }
+
+                    // Also publish navigation event
+                    self.publish_event(BrowserEvent::Navigation {
+                        url: url.to_string(),
+                    })?;
+                }
+            }
+            Some(type_) => {
+                error!("Unknown IPC message type: {}", type_);
+            }
+            None => {
+                error!("IPC message missing type field");
+            }
+        }
+
+        Ok(())
     }
 }
 
