@@ -30,8 +30,15 @@ impl EventSystem {
     pub fn new(broker_url: &str, client_id: &str) -> Self {
         info!("Creating new event system with broker: {}", broker_url);
 
+        // Ensure URL has mqtt:// scheme
+        let broker_url = if !broker_url.starts_with("mqtt://") {
+            format!("mqtt://{}", broker_url)
+        } else {
+            broker_url.to_string()
+        };
+
         // Parse the MQTT URL
-        let url = match Url::parse(broker_url) {
+        let url = match Url::parse(&broker_url) {
             Ok(url) => url,
             Err(e) => {
                 error!("Failed to parse broker URL: {}", e);

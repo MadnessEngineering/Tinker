@@ -405,3 +405,5 @@ This workshop is licensed under the MIT License - see the [LICENSE](LICENSE) fil
 - Connection status messages help track client connectivity
 - Status messages should include client ID, timestamp, and broker details
 - Use QoS::AtLeastOnce for important status messages
+- Always ensure MQTT URLs have the mqtt:// scheme prefix
+- Provide fallback to localhost if URL parsing fails
