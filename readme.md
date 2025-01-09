@@ -255,6 +255,73 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
   4. Add remaining engines as needed
   5. Implement comparison tooling
 
+### Event System Architecture
+- 🎯 Primary Goals:
+  - Real-time event monitoring and visualization
+  - MQTT-based remote control and automation
+  - Event recording and replay for testing
+  - Distributed system integration capabilities
+
+- 🏗️ Core Components:
+  1. Event Bus
+     - Central event routing and distribution
+     - Topic-based publish/subscribe system
+     - Priority-based event handling
+     - Event filtering and transformation
+
+  2. MQTT Integration
+     - Topic path mapping for browser events
+     - Remote control command handling
+     - Event broadcasting to external systems
+     - Secure connection management
+
+  3. Event Monitoring
+     - Real-time event visualization
+     - Event history with search/filter
+     - Performance metrics collection
+     - Debug logging integration
+
+  4. Recording/Replay
+     - Event capture with timing information
+     - Deterministic replay capabilities
+     - Session management and storage
+     - Export/import functionality
+
+- 🔄 Event Types:
+  1. Browser Events
+     - Navigation (URL changes, redirects)
+     - Tab operations (create, close, switch)
+     - Window state changes
+     - Error conditions
+
+  2. User Interactions
+     - Mouse events (clicks, movement)
+     - Keyboard input
+     - Touch/gesture events
+     - Form interactions
+
+  3. System Events
+     - Resource usage (memory, CPU)
+     - Network activity
+     - Plugin/extension events
+     - Process lifecycle events
+
+  4. Custom Events
+     - Test automation commands
+     - External system integration
+     - Custom script events
+     - Debug/profiling events
+
+- 🛡️ Design Principles:
+  - Asynchronous event processing
+  - Thread-safe event handling
+  - Minimal performance impact
+  - Extensible event types
+  - Reliable delivery guarantees
+  - Clear error handling
+  - Comprehensive monitoring
+  - Secure event transmission
+
 ## Engineering Roadmap
 
 ### Phase 1: Foundation Works
@@ -410,3 +477,43 @@ This workshop is licensed under the MIT License - see the [LICENSE](LICENSE) fil
 - Use QoS::AtLeastOnce for important status messages
 - Always ensure MQTT URLs have the mqtt:// scheme prefix
 - Provide fallback to localhost if URL parsing fails
+
+### Component Integration Strategy
+- 🔄 Event System as Core Infrastructure
+  - Acts as central nervous system for all components
+  - Provides foundational event types and processing
+  - Other components build on top rather than replacing
+  - Single source of truth for event data
+
+- 🎯 Component Responsibilities
+  1. Event System (Core Layer)
+     - Event definition and transport
+     - Basic recording and replay
+     - Core monitoring capabilities
+     - Performance metric collection
+
+  2. Recording Workshop (Feature Layer)
+     - Advanced recording scenarios
+     - Test case generation
+     - Scenario management
+     - Editing and composition
+
+  3. Debug Laboratory (Tool Layer)
+     - Event visualization and analysis
+     - Advanced debugging features
+     - Network and DOM inspection
+     - Performance profiling
+
+  4. External Tool Bench (Integration Layer)
+     - Protocol adaptation to MQTT
+     - External tool coordination
+     - CI/CD integration
+     - Framework compatibility
+
+- 🛠️ Integration Guidelines
+  - Components should consume rather than duplicate
+  - Use event system for all internal communication
+  - Maintain clear layer separation
+  - Follow established event patterns
+  - Share common metric collection
+  - Standardize on MQTT for external interfaces
