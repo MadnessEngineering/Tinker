@@ -413,34 +413,51 @@ impl BrowserEngine {
         Ok(())
     }
 
-    pub fn create_tab(&mut self, url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn create_tab(&mut self, url: &str) -> Result<usize, String> {
         if let Ok(mut tabs) = self.tabs.lock() {
             let id = tabs.create_tab(url.to_string());
-            
-            // Update tab UI
-            if let Some(tab_bar) = &self.tab_bar {
-                tab_bar.add_tab(id, "New Tab", url);
-                tab_bar.set_active_tab(id);
-            }
-
-            // Update content view
-            if let Some(content_view) = &self.content_view {
-                if let Ok(mut view) = content_view.lock() {
-                    view.load_url(url);
-                }
-            }
-            
-            // Publish event
-            if let Some(events) = &self.events {
+            if let Some(ref events) = self.events {
                 if let Ok(mut events) = events.lock() {
-                    events.publish(BrowserEvent::TabCreated { id })?;
-                    events.publish(BrowserEvent::TabUrlChanged { id, url: url.to_string() })?;
+                    let _ = events.publish(BrowserEvent::TabCreated { id });
                 }
             }
-
-            Ok(())
+            Ok(id)
         } else {
-            Err("Failed to lock tabs".into())
+            Err("Failed to lock tabs".to_string())
+        }
+    }
+
+    pub fn switch_to_tab(&mut self, id: usize) -> Result<(), String> {
+        if let Ok(mut tabs) = self.tabs.lock() {
+            if tabs.switch_to_tab(id) {
+                if let Some(ref events) = self.events {
+                    if let Ok(mut events) = events.lock() {
+                        let _ = events.publish(BrowserEvent::TabSwitched { id });
+                    }
+                }
+                Ok(())
+            } else {
+                Err("Tab not found".to_string())
+            }
+        } else {
+            Err("Failed to lock tabs".to_string())
+        }
+    }
+
+    pub fn close_tab(&mut self, id: usize) -> Result<(), String> {
+        if let Ok(mut tabs) = self.tabs.lock() {
+            if tabs.close_tab(id) {
+                if let Some(ref events) = self.events {
+                    if let Ok(mut events) = events.lock() {
+                        let _ = events.publish(BrowserEvent::TabClosed { id });
+                    }
+                }
+                Ok(())
+            } else {
+                Err("Tab not found".to_string())
+            }
+        } else {
+            Err("Failed to lock tabs".to_string())
         }
     }
 }
