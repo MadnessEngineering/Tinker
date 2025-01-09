@@ -26,11 +26,11 @@ pub struct EventSystem {
 impl EventSystem {
     pub fn new(broker_url: &str, client_id: &str) -> Self {
         info!("Creating new event system with broker: {}", broker_url);
-        
-        let mut options = MqttOptions::new(client_id, broker_url, 1883);
+
+        let mut options = MqttOptions::new(client_id, broker_url, 3003);
         options.set_keep_alive(Duration::from_secs(5));
         options.set_clean_session(true);
-        
+
         Self {
             client: None,
             options,
@@ -40,7 +40,7 @@ impl EventSystem {
     pub fn connect(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         debug!("Connecting to MQTT broker...");
         let (client, mut connection) = Client::new(self.options.clone(), 10);
-        
+
         // Spawn a thread to handle incoming messages
         std::thread::spawn(move || {
             debug!("Starting MQTT event loop");
@@ -197,7 +197,7 @@ mod tests {
             url: "https://example.com".to_string(),
         };
         let cloned = event.clone();
-        
+
         match (event, cloned) {
             (
                 BrowserEvent::Navigation { url: url1 },
@@ -209,4 +209,4 @@ mod tests {
             _ => panic!("Event cloning failed"),
         }
     }
-} 
+}
