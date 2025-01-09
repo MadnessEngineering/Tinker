@@ -197,7 +197,7 @@ impl BrowserEngine {
                 // Create the initial WebView
                 let window_size = window.inner_size();
                 let content_view = WebViewBuilder::new(&window)
-                    .with_url(default_url)
+                    .with_url(&default_url)
                     .map_err(|e| {
                         error!("Failed to set initial WebView URL: {}", e);
                         Box::new(e) as Box<dyn std::error::Error>
