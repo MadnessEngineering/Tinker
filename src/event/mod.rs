@@ -3,41 +3,37 @@
 use rumqttc::{Client, MqttOptions, QoS};
 use serde::{Deserialize, Serialize};
 use tracing::{info, error, debug};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum BrowserEvent {
     Navigation { url: String },
     TabCreated { id: usize },
     TabClosed { id: usize },
     TabSwitched { id: usize },
+    TabUrlChanged { id: usize, url: String },
+    TabTitleChanged { id: usize, title: String },
     PageLoaded { url: String },
     TitleChanged { title: String },
     Error { message: String },
-    TabTitleChanged { id: usize, title: String },
-    TabUrlChanged { id: usize, url: String },
 }
 
 pub struct EventSystem {
     client: Option<Client>,
     options: MqttOptions,
-    last_error_log: Option<Instant>,
-    error_count: usize,
 }
 
 impl EventSystem {
     pub fn new(broker_url: &str, client_id: &str) -> Self {
         info!("Creating new event system with broker: {}", broker_url);
-
+        
         let mut options = MqttOptions::new(client_id, broker_url, 1883);
         options.set_keep_alive(Duration::from_secs(5));
         options.set_clean_session(true);
-
+        
         Self {
             client: None,
             options,
-            last_error_log: None,
-            error_count: 0,
         }
     }
 
@@ -45,9 +41,6 @@ impl EventSystem {
         debug!("Connecting to MQTT broker...");
         let (client, mut connection) = Client::new(self.options.clone(), 10);
         
-        // Store the client before spawning the thread
-        self.client = Some(client);
-
         // Spawn a thread to handle incoming messages
         std::thread::spawn(move || {
             debug!("Starting MQTT event loop");
@@ -59,11 +52,22 @@ impl EventSystem {
             }
         });
 
+        self.client = Some(client);
         Ok(())
     }
 
     pub fn publish(&mut self, event: BrowserEvent) -> Result<(), Box<dyn std::error::Error>> {
-        let topic = "browser/events";
+        let topic = match &event {
+            BrowserEvent::Navigation { .. } => "browser/navigation",
+            BrowserEvent::TabCreated { .. } => "browser/tabs/created",
+            BrowserEvent::TabClosed { .. } => "browser/tabs/closed",
+            BrowserEvent::TabSwitched { .. } => "browser/tabs/switched",
+            BrowserEvent::PageLoaded { .. } => "browser/page/loaded",
+            BrowserEvent::TitleChanged { .. } => "browser/page/title",
+            BrowserEvent::TabTitleChanged { .. } => "browser/tabs/title",
+            BrowserEvent::TabUrlChanged { .. } => "browser/tabs/url",
+            BrowserEvent::Error { .. } => "browser/error",
+        };
         let payload = serde_json::to_string(&event)?;
 
         if self.client.is_none() {
@@ -104,19 +108,7 @@ impl EventSystem {
             client.subscribe(topic, QoS::AtLeastOnce)?;
             Ok(())
         } else {
-            let now = Instant::now();
-            if let Some(last) = self.last_error_log {
-                if now.duration_since(last) > Duration::from_secs(5) {
-                    error!("Cannot subscribe: MQTT client not connected (occurred {} times)", self.error_count + 1);
-                    self.last_error_log = Some(now);
-                    self.error_count = 0;
-                } else {
-                    self.error_count += 1;
-                }
-            } else {
-                error!("Cannot subscribe: MQTT client not connected");
-                self.last_error_log = Some(now);
-            }
+            error!("Cannot subscribe: MQTT client not connected");
             Err("MQTT client not connected".into())
         }
     }

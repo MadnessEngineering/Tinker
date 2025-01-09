@@ -70,15 +70,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create browser instance
     let mut browser = BrowserEngine::new(
         args.headless,
-        args.broker_url.as_deref(),
+        events.clone(),
     );
 
     // Subscribe to relevant topics if events are enabled
     if let Some(ref events) = events {
         if let Ok(mut events) = events.lock() {
-            events.subscribe("browser/events")?;
-            events.subscribe("browser/commands")?;
-            info!("Subscribed to browser event topics");
+            // Subscribe to all browser events using wildcard
+            events.subscribe("browser/#")?;
+            info!("Subscribed to all browser events");
         }
     }
 
@@ -120,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load URL if provided
     if let Some(url) = args.url {
-        browser.navigate(tab_id, &url)?;
+        browser.navigate(&url)?;
         info!("Navigating to: {}", url);
     }
 

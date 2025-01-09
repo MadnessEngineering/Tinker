@@ -66,6 +66,14 @@ impl TabManager {
         self.active_tab.and_then(|id| self.tabs.get(&id))
     }
 
+    pub fn get_active_tab_mut(&mut self) -> Option<&mut Tab> {
+        self.active_tab.and_then(move |id| self.tabs.get_mut(&id))
+    }
+
+    pub fn get_tab(&self, id: usize) -> Option<&Tab> {
+        self.tabs.get(&id)
+    }
+
     pub fn get_all_tabs(&self) -> Vec<&Tab> {
         self.tabs.values().collect()
     }
