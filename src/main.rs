@@ -73,6 +73,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.broker_url.as_deref(),
     );
 
+    // Subscribe to relevant topics if events are enabled
+    if let Some(ref events) = events {
+        if let Ok(mut events) = events.lock() {
+            events.subscribe("browser/events")?;
+            events.subscribe("browser/commands")?;
+            info!("Subscribed to browser event topics");
+        }
+    }
+
     // Start recording if enabled
     if args.record {
         if let Some(path) = args.record_path.as_deref() {

@@ -67,14 +67,13 @@ pub struct BrowserEngine {
 
 impl BrowserEngine {
     pub fn new(headless: bool, broker_url: Option<&str>) -> Self {
-        let events = Arc::new(Mutex::new(EventSystem::new(
-            broker_url.unwrap_or("ws://localhost:8080"),
-            "browser-client",
-        )));
+        let events = broker_url.map(|url| {
+            Arc::new(Mutex::new(EventSystem::new(url, "browser-client")))
+        });
 
         BrowserEngine {
             tabs: Arc::new(Mutex::new(TabManager::new())),
-            events: Some(events),
+            events,
             player: Arc::new(Mutex::new(EventPlayer::default())),
             recorder: Arc::new(Mutex::new(EventRecorder::default())),
             event_viewer: Arc::new(Mutex::new(EventViewer::new())),
@@ -87,16 +86,28 @@ impl BrowserEngine {
         }
     }
 
+    fn publish_event(&self, event: BrowserEvent) {
+        if let Some(ref events) = self.events {
+            if let Ok(mut events) = events.lock() {
+                if let Err(e) = events.publish(event) {
+                    error!("Failed to publish event: {}", e);
+                }
+            }
+        }
+    }
+
     pub fn navigate(&mut self, tab_id: usize, url: &str) -> Result<(), String> {
         let mut tabs = self.tabs.lock().unwrap();
         if let Some(tab) = tabs.get_tab_mut(tab_id) {
             // In headless mode, just update the URL without using WebView
             if self.headless {
                 tab.url = url.to_string();
+                self.publish_event(BrowserEvent::Navigation { url: url.to_string() });
                 Ok(())
             } else if let Some(webview) = tab.webview.as_ref() {
                 let webview = webview.lock().unwrap();
                 webview.load_url(url);
+                self.publish_event(BrowserEvent::Navigation { url: url.to_string() });
                 Ok(())
             } else {
                 Err("WebView not initialized".to_string())
@@ -398,6 +409,13 @@ impl BrowserEngine {
                                                     ));
                                                 }
                                             }
+
+                                            // Publish event
+                                            if let Some(ref events) = events {
+                                                if let Ok(mut events) = events.lock() {
+                                                    let _ = events.publish(BrowserEvent::TabCreated { id });
+                                                }
+                                            }
                                         }
                                         Err(e) => {
                                             error!("Failed to create WebView: {}", e);
@@ -419,6 +437,12 @@ impl BrowserEngine {
                                 if let Some(ref view) = content_view {
                                     if let Ok(view) = view.lock() {
                                         view.load_url(&url);
+                                        // Publish event
+                                        if let Some(ref events) = events {
+                                            if let Ok(mut events) = events.lock() {
+                                                let _ = events.publish(BrowserEvent::Navigation { url: url.clone() });
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -430,6 +454,12 @@ impl BrowserEngine {
                                                 bar.remove_tab(id);
                                             }
                                         }
+                                        // Publish event
+                                        if let Some(ref events) = events {
+                                            if let Ok(mut events) = events.lock() {
+                                                let _ = events.publish(BrowserEvent::TabClosed { id });
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -439,6 +469,12 @@ impl BrowserEngine {
                                         if let Some(ref tab_bar) = tab_bar {
                                             if let Ok(mut bar) = tab_bar.lock() {
                                                 bar.set_active_tab(id);
+                                            }
+                                        }
+                                        // Publish event
+                                        if let Some(ref events) = events {
+                                            if let Ok(mut events) = events.lock() {
+                                                let _ = events.publish(BrowserEvent::TabSwitched { id });
                                             }
                                         }
                                     }
@@ -500,6 +536,7 @@ impl BrowserEngine {
             }
         }
 
+        self.publish_event(BrowserEvent::TabCreated { id });
         Ok(id)
     }
 
