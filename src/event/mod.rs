@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, error, debug};
 use std::time::Duration;
 use url::Url;
+use serde_json::json;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum BrowserEvent {
@@ -57,6 +58,26 @@ impl EventSystem {
         debug!("Connecting to MQTT broker at {}", self.broker_url);
         let (client, mut connection) = Client::new(self.options.clone(), 10);
 
+        // Store client first so we can publish the connection message
+        self.client = Some(client);
+
+        // Publish connection status
+        let status = json!({
+            "status": "connected",
+            "client_id": self.options.client_id(),
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "broker": self.broker_url
+        });
+        if let Some(ref mut client) = self.client {
+            debug!("Publishing connection status");
+            client.publish(
+                "browser/connection",
+                QoS::AtLeastOnce,
+                false,
+                serde_json::to_string(&status)?.as_bytes(),
+            )?;
+        }
+
         // Spawn a thread to handle incoming messages
         std::thread::spawn(move || {
             debug!("Starting MQTT event loop");
@@ -68,7 +89,6 @@ impl EventSystem {
             }
         });
 
-        self.client = Some(client);
         Ok(())
     }
 

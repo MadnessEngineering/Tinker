@@ -402,3 +402,6 @@ This workshop is licensed under the MIT License - see the [LICENSE](LICENSE) fil
 - Connection errors should be handled gracefully with reconnection attempts
 - Event system should maintain its own state for reconnection handling
 - Broker URL should be stored for debugging and reconnection purposes
+- Connection status messages help track client connectivity
+- Status messages should include client ID, timestamp, and broker details
+- Use QoS::AtLeastOnce for important status messages
