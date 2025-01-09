@@ -3,6 +3,7 @@
 use std::{
     sync::{Arc, Mutex, mpsc::{channel, Sender}},
     time::{Duration, Instant},
+    env,
 };
 use tao::{
     event::{Event, WindowEvent},
@@ -12,6 +13,7 @@ use tao::{
 };
 use wry::{WebView, WebViewBuilder};
 use tracing::{debug, info, error};
+use dotenv::dotenv;
 
 use crate::event::{BrowserEvent, EventSystem};
 use crate::templates::get_window_chrome;
@@ -32,7 +34,10 @@ use self::{
     native_ui::NativeTabBar,
 };
 
-const DEFAULT_URL: &str = "https://github.com/DanEdens/Tinker";
+fn get_default_url() -> String {
+    dotenv().ok(); // Load .env file
+    env::var("DEFAULT_URL").unwrap_or_else(|_| "https://github.com/DanEdens/Tinker".to_string())
+}
 
 #[derive(Debug)]
 enum BrowserCommand {
@@ -186,8 +191,8 @@ impl BrowserEngine {
         // Create initial tab if none exists
         if let Ok(mut tabs) = self.tabs.lock() {
             if tabs.get_all_tabs().is_empty() {
-                let default_url = DEFAULT_URL;
-                let id = tabs.create_tab(default_url.to_string());
+                let default_url = get_default_url();
+                let id = tabs.create_tab(default_url.clone());
 
                 // Create the initial WebView
                 let window_size = window.inner_size();
@@ -205,9 +210,9 @@ impl BrowserEngine {
                     .with_visible(true)
                     .with_bounds(wry::Rect {
                         x: 0,
-                        y: 40,  // Leave space for the tab bar
+                        y: 80,  // Position below both title bar and tab bar (40px + 40px)
                         width: window_size.width,
-                        height: window_size.height.saturating_sub(40),
+                        height: window_size.height.saturating_sub(80),  // Subtract height of both bars
                     })
                     .build()
                     .map_err(|e| {
@@ -331,9 +336,9 @@ impl BrowserEngine {
                         if let Ok(view) = view.lock() {
                             view.set_bounds(wry::Rect {
                                 x: 0,
-                                y: 40,  // Position below chrome/tab bar
+                                y: 80,  // Position below both title bar and tab bar
                                 width: new_size.width,
-                                height: new_size.height.saturating_sub(40),
+                                height: new_size.height.saturating_sub(80),
                             });
                         }
                     }
@@ -343,6 +348,12 @@ impl BrowserEngine {
                     while let Ok(cmd) = browser_cmd_rx.try_recv() {
                         match cmd {
                             BrowserCommand::CreateTab { url } => {
+                                let url = if url == "about:blank" {
+                                    get_default_url()
+                                } else {
+                                    url
+                                };
+
                                 if let Ok(mut tabs_guard) = tabs.lock() {
                                     let id = tabs_guard.create_tab(url.clone());
 
@@ -350,20 +361,30 @@ impl BrowserEngine {
                                     let window_size = window.inner_size();
                                     match WebViewBuilder::new(&*window)
                                         .with_url(&url)
-                                        .expect("Failed to set URL")
-                                        .with_initialization_script("
-                                            window.addEventListener('DOMContentLoaded', () => {
-                                                // Add any initialization code here
-                                            });
-                                        ")
-                                        .with_bounds(wry::Rect {
-                                            x: 0,
-                                            y: 40,  // Position below chrome/tab bar
-                                            width: window_size.width,
-                                            height: window_size.height.saturating_sub(40),
+                                        .map_err(|e| {
+                                            error!("Failed to set URL: {}", e);
+                                            e
                                         })
-                                        .build()
-                                    {
+                                        .and_then(|builder| {
+                                            builder
+                                                .with_initialization_script("
+                                                    document.documentElement.style.background = '#ffffff';
+                                                    document.body.style.background = '#ffffff';
+                                                ")
+                                                .with_transparent(false)
+                                                .with_visible(true)
+                                                .with_bounds(wry::Rect {
+                                                    x: 0,
+                                                    y: 80,  // Position below both title bar and tab bar
+                                                    width: window_size.width,
+                                                    height: window_size.height.saturating_sub(80),
+                                                })
+                                                .build()
+                                                .map_err(|e| {
+                                                    error!("Failed to build WebView: {}", e);
+                                                    e
+                                                })
+                                        }) {
                                         Ok(new_view) => {
                                             let new_view = Arc::new(Mutex::new(new_view));
                                             
@@ -375,7 +396,7 @@ impl BrowserEngine {
                                             // Update tab bar
                                             if let Some(ref tab_bar) = tab_bar {
                                                 if let Ok(mut bar) = tab_bar.lock() {
-                                                    bar.add_tab(id, "New Tab");
+                                                    bar.add_tab(id, &url);  // Use URL as initial title
                                                     bar.set_active_tab(id);
                                                 }
                                             }
@@ -500,7 +521,7 @@ impl BrowserEngine {
             MenuCommand::NewTab => {
                 if let Some(cmd_tx) = cmd_tx {
                     let _ = cmd_tx.send(BrowserCommand::CreateTab {
-                        url: DEFAULT_URL.to_string(),
+                        url: get_default_url(),
                     });
                 }
             }
