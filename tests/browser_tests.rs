@@ -16,11 +16,11 @@ fn test_browser_headless_startup() {
 #[test]
 fn test_browser_with_url() {
     let mut cmd = Command::cargo_bin("tinker").unwrap();
-    cmd.args(["--headless", "--url", "https://example.com"])
+    cmd.args(["--headless", "--url", "https://github.com/DanEdens/Tinker"])
         .timeout(Duration::from_secs(5))
         .assert()
         .success()
-        .stdout(predicate::str::contains("Navigating to: https://example.com"));
+        .stdout(predicate::str::contains("Navigating to: https://github.com/DanEdens/Tinker"));
 }
 
 #[test]
@@ -36,10 +36,10 @@ fn test_browser_with_multiple_tabs() {
 #[test]
 fn test_browser_recording() {
     let record_path = "test_recording.json";
-    
+
     // Clean up any existing recording
     let _ = fs::remove_file(record_path);
-    
+
     let mut cmd = Command::cargo_bin("tinker").unwrap();
     cmd.args([
         "--headless",
@@ -47,7 +47,7 @@ fn test_browser_recording() {
         "--record-path",
         record_path,
         "--url",
-        "https://example.com"
+        "https://github.com/DanEdens/Tinker"
     ])
     .timeout(Duration::from_secs(5))
     .assert()
@@ -56,7 +56,7 @@ fn test_browser_recording() {
 
     // Verify the recording file was created
     assert!(fs::metadata(record_path).is_ok());
-    
+
     // Clean up
     let _ = fs::remove_file(record_path);
 }
@@ -64,7 +64,7 @@ fn test_browser_recording() {
 #[test]
 fn test_browser_replay() {
     let record_path = "test_replay.json";
-    
+
     // First create a recording
     let mut cmd = Command::cargo_bin("tinker").unwrap();
     cmd.args([
@@ -73,7 +73,7 @@ fn test_browser_replay() {
         "--record-path",
         record_path,
         "--url",
-        "https://example.com"
+        "https://github.com/DanEdens/Tinker"
     ])
     .timeout(Duration::from_secs(5))
     .assert()

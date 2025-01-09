@@ -12,23 +12,24 @@ use crate::{
     event::EventSystem,
 };
 
-#[derive(Parser)]
-#[command(name = "tinker")]
-#[command(author = "Cursor")]
-#[command(version = "0.1.0")]
-#[command(about = "A craftsperson's browser", long_about = None)]
+#[derive(Parser, Debug)]
+#[command(author, version, about = "A craftsperson's browser", long_about = None)]
 struct Args {
     /// URL to load
-    #[arg(long)]
+    #[arg(short, long)]
     url: Option<String>,
 
     /// Run in headless mode
-    #[arg(long)]
+    #[arg(short = 'H', long)]
     headless: bool,
 
-    /// MQTT broker URL
+    /// Event broker URL
+    #[arg(short, long)]
+    broker_url: Option<String>,
+
+    /// Number of tabs to open
     #[arg(long)]
-    mqtt_broker: Option<String>,
+    tabs: Option<usize>,
 
     /// Enable event recording
     #[arg(long)]
@@ -45,55 +46,40 @@ struct Args {
     /// Speed multiplier for replay
     #[arg(long)]
     replay_speed: Option<f32>,
-
-    /// Number of tabs to open
-    #[arg(long)]
-    tabs: Option<usize>,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt::init();
+    info!("Starting Tinker Workshop...");
 
+    // Parse command line arguments
     let args = Args::parse();
-    info!("Starting Tinker Workshop");
 
-    // Initialize event system if MQTT broker is specified
-    let events = if let Some(broker_url) = args.mqtt_broker {
-        let mut events = EventSystem::new(&broker_url, "tinker-browser");
-        let _ = events.connect();
+    // Initialize event system if broker URL is specified
+    let events = if let Some(broker_url) = args.broker_url.as_ref() {
+        let mut events = EventSystem::new(broker_url, "tinker-browser");
+        events.connect()?;
+        info!("Connected to event broker at {}", broker_url);
         Some(Arc::new(Mutex::new(events)))
     } else {
         None
     };
 
-    // Create browser engine
-    let mut browser = BrowserEngine::new(args.headless, events);
-
-    // Create initial tabs
-    if let Some(num_tabs) = args.tabs {
-        info!("Creating {} tabs", num_tabs);
-        for i in 0..num_tabs {
-            browser.create_tab("about:blank")?;
-            info!("Created new tab {}", i);
-        }
-    }
-
-    // Load URL if specified
-    if let Some(url) = args.url {
-        let url = url.clone();
-        browser.navigate(&url)?;
-    }
+    // Create browser instance
+    let mut browser = BrowserEngine::new(
+        args.headless,
+        args.broker_url.as_deref(),
+    );
 
     // Start recording if enabled
     if args.record {
-        if let Some(path) = args.record_path {
-            let path = path.clone();
-            browser.start_recording(&path);
+        if let Some(path) = args.record_path.as_deref() {
+            browser.start_recording(path);
             info!("Recording will be saved to {}", path);
         } else {
-            error!("--record-path is required when using --record");
-            return Err("--record-path is required".into());
+            return Err("--record-path is required when --record is specified".into());
         }
     }
 
@@ -103,7 +89,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             error!("Replay file not found: {}", path);
             return Err("Replay file not found".into());
         }
-        let path = path.clone();
         browser.load_recording(&path)?;
         if let Some(speed) = args.replay_speed {
             browser.set_replay_speed(speed);
@@ -112,7 +97,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Replaying events from {}", path);
     }
 
-    // Run the browser
+    // Create initial tab
+    let tab_id = browser.create_tab("about:blank")?;
+
+    // Create additional tabs if requested
+    if let Some(num_tabs) = args.tabs {
+        info!("Creating {} tabs", num_tabs);
+        for i in 1..num_tabs {
+            browser.create_tab("about:blank")?;
+            info!("Created new tab {}", i);
+        }
+    }
+
+    // Load URL if provided
+    if let Some(url) = args.url {
+        browser.navigate(tab_id, &url)?;
+        info!("Navigating to: {}", url);
+    }
+
+    // Start event loop
     browser.run()?;
 
     Ok(())

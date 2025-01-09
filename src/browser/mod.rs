@@ -66,14 +66,19 @@ pub struct BrowserEngine {
 }
 
 impl BrowserEngine {
-    pub fn new(headless: bool, events: Option<Arc<Mutex<EventSystem>>>) -> Self {
+    pub fn new(headless: bool, broker_url: Option<&str>) -> Self {
+        let events = Arc::new(Mutex::new(EventSystem::new(
+            broker_url.unwrap_or("ws://localhost:8080"),
+            "browser-client",
+        )));
+
         BrowserEngine {
-            headless,
-            events,
+            tabs: Arc::new(Mutex::new(TabManager::new())),
+            events: Some(events),
             player: Arc::new(Mutex::new(EventPlayer::default())),
             recorder: Arc::new(Mutex::new(EventRecorder::default())),
-            event_viewer: Arc::new(Mutex::new(EventViewer::default())),
-            tabs: Arc::new(Mutex::new(TabManager::default())),
+            event_viewer: Arc::new(Mutex::new(EventViewer::new())),
+            headless,
             tab_bar: None,
             content_view: None,
             window: None,
@@ -82,33 +87,23 @@ impl BrowserEngine {
         }
     }
 
-    pub fn navigate(&self, url: &str) -> Result<(), String> {
-        info!("Navigating to: {}", url);
-
-        // Update the tab URL first
-        if let Ok(mut tabs) = self.tabs.lock() {
-            if let Some(tab) = tabs.get_active_tab_mut() {
+    pub fn navigate(&mut self, tab_id: usize, url: &str) -> Result<(), String> {
+        let mut tabs = self.tabs.lock().unwrap();
+        if let Some(tab) = tabs.get_tab_mut(tab_id) {
+            // In headless mode, just update the URL without using WebView
+            if self.headless {
                 tab.url = url.to_string();
+                Ok(())
+            } else if let Some(webview) = tab.webview.as_ref() {
+                let webview = webview.lock().unwrap();
+                webview.load_url(url);
+                Ok(())
+            } else {
+                Err("WebView not initialized".to_string())
             }
+        } else {
+            Err("Tab not found".to_string())
         }
-
-        // Then update the WebView
-        if let Some(view) = &self.content_view {
-            if let Ok(view) = view.lock() {
-                view.load_url(url);
-            }
-        }
-
-        // Finally, emit the navigation event
-        if let Some(events) = &self.events {
-            if let Ok(mut events) = events.lock() {
-                events.publish(BrowserEvent::Navigation {
-                    url: url.to_string(),
-                }).map_err(|e| e.to_string())?;
-            }
-        }
-
-        Ok(())
     }
 
     pub fn get_active_tab(&self) -> Option<String> {
@@ -489,37 +484,23 @@ impl BrowserEngine {
         Ok(())
     }
 
-    pub fn create_tab(&mut self, url: &str) -> Result<(), Box<dyn std::error::Error>> {
-        if let Ok(mut tabs) = self.tabs.lock() {
-            let id = tabs.create_tab(url.to_string());
-            
-            // Update tab UI
-            if let Some(tab_bar) = &self.tab_bar {
-                if let Ok(mut bar) = tab_bar.lock() {
-                    bar.add_tab(id, "New Tab");
-                    bar.set_active_tab(id);
-                }
-            }
+    pub fn create_tab(&mut self, url: &str) -> Result<usize, String> {
+        let default_url = get_default_url();
+        let url = if url == "about:blank" { &default_url } else { url };
 
-            // Update content view
-            if let Some(content_view) = &self.content_view {
-                if let Ok(mut view) = content_view.lock() {
-                    view.load_url(url);
-                }
-            }
-            
-            // Publish event
-            if let Some(events) = &self.events {
-                if let Ok(mut events) = events.lock() {
-                    events.publish(BrowserEvent::TabCreated { id })?;
-                    events.publish(BrowserEvent::TabUrlChanged { id, url: url.to_string() })?;
-                }
-            }
+        let mut tabs = self.tabs.lock().unwrap();
+        let id = tabs.create_tab(url.to_string());
 
-            Ok(())
-        } else {
-            Err("Failed to lock tabs".into())
+        // Create WebView for the tab
+        if !self.headless {
+            if let Some(window) = &self.window {
+                let webview = WebView::new(window).map_err(|e| e.to_string())?;
+                webview.load_url(url);
+                tabs.set_tab_webview(id, Arc::new(Mutex::new(webview)));
+            }
         }
+
+        Ok(id)
     }
 
     fn handle_menu_command(
@@ -647,29 +628,72 @@ impl BrowserEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
 
-    const DEFAULT_URL: &str = "https://github.com/DanEdens/Tinker";
+    #[test]
+    fn test_default_url_from_env() {
+        // Save the original environment variable if it exists
+        let original = env::var("DEFAULT_URL").ok();
+
+        // Test with environment variable set
+        env::set_var("DEFAULT_URL", "https://github.com/DanEdens/Tinker");
+        assert_eq!(get_default_url(), "https://github.com/DanEdens/Tinker");
+
+        // Test fallback when environment variable is not set
+        env::remove_var("DEFAULT_URL");
+        assert_eq!(get_default_url(), "https://github.com/DanEdens/Tinker");
+
+        // Restore the original environment variable if it existed
+        if let Some(url) = original {
+            env::set_var("DEFAULT_URL", url);
+        }
+    }
+
+    #[test]
+    fn test_tab_creation_with_invalid_url() {
+        let mut browser = BrowserEngine::new(true, None);
+        let result = browser.create_tab("not a valid url");
+        // In headless mode, we don't validate URLs since we don't create WebViews
+        assert!(result.is_ok(), "Tab creation should succeed in headless mode");
+    }
+
+    #[test]
+    fn test_tab_creation_with_about_blank() {
+        // Set up environment for test
+        env::remove_var("DEFAULT_URL");
+        
+        let mut browser = BrowserEngine::new(true, None);
+        let result = browser.create_tab("about:blank");
+        assert!(result.is_ok(), "Failed to create tab with about:blank");
+        
+        if let Ok(tab) = result {
+            let tabs = browser.tabs.lock().unwrap();
+            let tab_info = tabs.get_tab_info(tab).unwrap();
+            assert_eq!(tab_info.url, "https://github.com/DanEdens/Tinker", "about:blank should be replaced with default URL");
+        }
+    }
+
+    #[test]
+    fn test_tab_state_sync() {
+        let mut browser = BrowserEngine::new(true, None);
+        let tab_id = browser.create_tab("https://example.com").unwrap();
+        
+        let tabs = browser.tabs.lock().unwrap();
+        assert!(tabs.get_tab_info(tab_id).is_some(), "Tab should exist after creation");
+        assert_eq!(tabs.get_tab_count(), 1, "Should have exactly one tab");
+    }
 
     #[test]
     fn test_browser_navigation() {
-        let mut browser = BrowserEngine::new(false, None);
-
-        // Create initial tab and get its URL
-        let initial_url = {
-            let mut tabs = browser.tabs.lock().unwrap();
-            let id = tabs.create_tab(DEFAULT_URL.to_string());
-            tabs.get_active_tab().map(|tab| tab.url.clone()).unwrap()
-        };
-        assert_eq!(initial_url, DEFAULT_URL);
-
-        // Navigate to the test URL
-        browser.navigate("https://www.example.com").unwrap();
-
-        // Verify the URL was updated
-        let final_url = {
-            let tabs = browser.tabs.lock().unwrap();
-            tabs.get_active_tab().map(|tab| tab.url.clone()).unwrap()
-        };
-        assert_eq!(final_url, "https://www.example.com");
+        let mut browser = BrowserEngine::new(true, None);
+        let tab_id = browser.create_tab("https://example.com").unwrap();
+        
+        let result = browser.navigate(tab_id, "https://github.com");
+        // In headless mode, navigation should succeed since we just update the URL
+        assert!(result.is_ok(), "Navigation should succeed in headless mode");
+        
+        let tabs = browser.tabs.lock().unwrap();
+        let tab_info = tabs.get_tab_info(tab_id).unwrap();
+        assert_eq!(tab_info.url, "https://github.com", "URL should be updated in headless mode");
     }
 }
