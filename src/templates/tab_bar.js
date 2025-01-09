@@ -20,15 +20,36 @@ function createTabElement(id, title, url) {
 
 function addTab(id, title, url) {
     const tabBar = document.getElementById('tab-bar');
-    const newTab = document.getElementById('new-tab');
-    const tab = createTabElement(id, title, url);
+    const newTabButton = document.getElementById('new-tab');
 
-    tabBar.insertBefore(tab, newTab);
-    tabs.set(id, { title, url });
+    // Create tab element
+    const tab = document.createElement('div');
+    tab.className = 'tab';
+    tab.setAttribute('data-id', id);
+    tab.onclick = () => switchTab(id);
 
-    if (activeTabId === null) {
-        setActiveTab(id);
-    }
+    // Create title element
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'tab-title';
+    titleSpan.textContent = title;
+    tab.appendChild(titleSpan);
+
+    // Create close button
+    const closeButton = document.createElement('div');
+    closeButton.className = 'tab-close';
+    closeButton.innerHTML = '×';
+    closeButton.onclick = (e) =>
+    {
+        e.stopPropagation();
+        closeTab(id);
+    };
+    tab.appendChild(closeButton);
+
+    // Insert before the new tab button
+    tabBar.insertBefore(tab, newTabButton);
+
+    // Set as active
+    setActiveTab(id);
 }
 
 function updateTab(id, title, url) {
@@ -45,37 +66,27 @@ function removeTab(id) {
     const tab = document.querySelector(`.tab[data-id="${id}"]`);
     if (tab) {
         tab.remove();
-        tabs.delete(id);
-
-        // If we removed the active tab, activate another one
-        if (activeTabId === id) {
-            const remainingTabs = Array.from(tabs.keys());
-            if (remainingTabs.length > 0) {
-                setActiveTab(remainingTabs[0]);
-            } else {
-                activeTabId = null;
-            }
-        }
     }
 }
 
 function setActiveTab(id) {
-    // Remove active class from current active tab
-    const currentActive = document.querySelector('.tab.active');
-    if (currentActive) {
-        currentActive.classList.remove('active');
-    }
+    // Remove active class from all tabs
+    document.querySelectorAll('.tab').forEach(tab =>
+    {
+        tab.classList.remove('active');
+    });
 
-    // Add active class to new active tab
-    const newActive = document.querySelector(`.tab[data-id="${id}"]`);
-    if (newActive) {
-        newActive.classList.add('active');
-        activeTabId = id;
+    // Add active class to selected tab
+    const tab = document.querySelector(`.tab[data-id="${id}"]`);
+    if (tab)
+    {
+        tab.classList.add('active');
     }
 }
 
 // Event handlers that will send messages to Rust
 function createNewTab() {
+    // Send message to Rust to create a new tab
     window.ipc.postMessage(JSON.stringify({
         type: 'TabCreated',
         url: 'https://github.com/DanEdens/Tinker'
@@ -94,4 +105,4 @@ function switchTab(id) {
         type: 'TabSwitched',
         id: id
     }));
-} 
+}

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #24292e;
+            user-select: none;
+            height: 40px;
+            overflow: hidden;
+            -webkit-app-region: drag;  /* Make the title bar draggable */
+        }
+
+        #title-bar {
+            display: flex;
+            align-items: center;
+            height: 40px;
+            padding: 0 8px;
+            color: #ffffff;
+        }
+
+        #window-controls {
+            display: flex;
+            align-items: center;
+            margin-left: auto;
+            -webkit-app-region: no-drag;  /* Make buttons clickable */
+        }
+
+        .window-button {
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            color: #8b949e;
+        }
+
+        .window-button:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+        }
+
+        #tab-bar {
+            display: flex;
+            align-items: center;
+            margin-left: 16px;
+            -webkit-app-region: no-drag;  /* Make tabs clickable */
+        }
+
+        .tab {
+            display: flex;
+            align-items: center;
+            height: 32px;
+            min-width: 100px;
+            max-width: 200px;
+            margin-right: 4px;
+            padding: 0 12px;
+            background: #1a1f24;
+            border: 1px solid #30363d;
+            border-radius: 6px 6px 0 0;
+            cursor: pointer;
+            color: #c9d1d9;
+        }
+
+        .tab.active {
+            background: #2d333b;
+            border-bottom-color: #2d333b;
+            color: #ffffff;
+        }
+
+        .tab:hover {
+            background: #2d333b;
+        }
+
+        .tab-title {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            margin-right: 8px;
+            font-size: 12px;
+        }
+
+        .tab-close {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            color: #8b949e;
+            cursor: pointer;
+            visibility: hidden;
+        }
+
+        .tab:hover .tab-close {
+            visibility: visible;
+        }
+
+        .tab-close:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+        }
+
+        #new-tab {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: #8b949e;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: background 0.2s;
+            margin-left: 4px;
+        }
+
+        #new-tab:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+        }
+    </style>
+</head>
+<body>
+    <div id="title-bar">
+        <div id="tab-bar">
+            <!-- Tabs will be dynamically added here -->
+            <div id="new-tab" onclick="createNewTab()">+</div>
+        </div>
+        <div id="window-controls">
+            <div class="window-button" onclick="minimizeWindow()">─</div>
+            <div class="window-button" onclick="maximizeWindow()">□</div>
+            <div class="window-button" onclick="closeWindow()">×</div>
+        </div>
+    </div>
+    <script>
+        // Window control functions
+        function minimizeWindow() {
+            window.ipc.postMessage(JSON.stringify({ type: 'WindowControl', action: 'minimize' }));
+        }
+
+        function maximizeWindow() {
+            window.ipc.postMessage(JSON.stringify({ type: 'WindowControl', action: 'maximize' }));
+        }
+
+        function closeWindow() {
+            window.ipc.postMessage(JSON.stringify({ type: 'WindowControl', action: 'close' }));
+        }
+
+        // Tab management functions
+        function createNewTab() {
+            window.ipc.postMessage(JSON.stringify({
+                type: 'TabCreated',
+                url: 'https://github.com/DanEdens/Tinker'
+            }));
+        }
+
+        function addTab(id, title, url) {
+            const tabBar = document.getElementById('tab-bar');
+            const newTabButton = document.getElementById('new-tab');
+            
+            const tab = document.createElement('div');
+            tab.className = 'tab';
+            tab.setAttribute('data-id', id);
+            tab.onclick = () => switchTab(id);
+            
+            const titleSpan = document.createElement('span');
+            titleSpan.className = 'tab-title';
+            titleSpan.textContent = title;
+            tab.appendChild(titleSpan);
+            
+            const closeButton = document.createElement('div');
+            closeButton.className = 'tab-close';
+            closeButton.innerHTML = '×';
+            closeButton.onclick = (e) => {
+                e.stopPropagation();
+                closeTab(id);
+            };
+            tab.appendChild(closeButton);
+            
+            tabBar.insertBefore(tab, newTabButton);
+            setActiveTab(id);
+        }
+
+        function removeTab(id) {
+            const tab = document.querySelector(`.tab[data-id="${id}"]`);
+            if (tab) {
+                tab.remove();
+            }
+        }
+
+        function setActiveTab(id) {
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            const tab = document.querySelector(`.tab[data-id="${id}"]`);
+            if (tab) {
+                tab.classList.add('active');
+            }
+        }
+
+        function switchTab(id) {
+            window.ipc.postMessage(JSON.stringify({
+                type: 'TabSwitched',
+                id: id
+            }));
+        }
+
+        function closeTab(id) {
+            window.ipc.postMessage(JSON.stringify({
+                type: 'TabClosed',
+                id: id
+            }));
+        }
+    </script>
+</body>
+</html> 

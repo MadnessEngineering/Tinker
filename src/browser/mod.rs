@@ -14,12 +14,14 @@ use wry::{WebView, WebViewBuilder};
 use tracing::{debug, info, error};
 
 use crate::event::{BrowserEvent, EventSystem};
+use crate::templates::get_window_chrome;
 
 mod tabs;
 mod event_viewer;
 mod tab_ui;
 mod replay;
 mod menu;
+mod native_ui;
 
 use self::{
     tabs::TabManager,
@@ -27,7 +29,10 @@ use self::{
     tab_ui::{TabBar, TabCommand},
     replay::{EventRecorder, EventPlayer},
     menu::{create_application_menu, MenuCommand},
+    native_ui::NativeTabBar,
 };
+
+const DEFAULT_URL: &str = "https://github.com/DanEdens/Tinker";
 
 #[derive(Debug)]
 enum BrowserCommand {
@@ -48,10 +53,11 @@ pub struct BrowserEngine {
     recorder: Arc<Mutex<EventRecorder>>,
     event_viewer: Arc<Mutex<EventViewer>>,
     tabs: Arc<Mutex<TabManager>>,
-    tab_bar: Option<TabBar>,
+    tab_bar: Option<Arc<Mutex<NativeTabBar>>>,
     content_view: Option<Arc<Mutex<WebView>>>,
     window: Option<Arc<Window>>,
     cmd_tx: Option<Sender<BrowserCommand>>,
+    chrome_view: Option<Arc<Mutex<WebView>>>,
 }
 
 impl BrowserEngine {
@@ -67,6 +73,7 @@ impl BrowserEngine {
             content_view: None,
             window: None,
             cmd_tx: None,
+            chrome_view: None,
         }
     }
 
@@ -161,7 +168,7 @@ impl BrowserEngine {
         let window = Arc::new(WindowBuilder::new()
             .with_title("Tinker Browser")
             .with_inner_size(LogicalSize::new(1024.0, 768.0))
-            .with_decorations(true)  // Enable window decorations
+            .with_decorations(true)  // Enable default decorations for now
             .build(&event_loop)?);
 
         // Set up command channels
@@ -176,33 +183,10 @@ impl BrowserEngine {
         self.window = Some(window.clone());
         self.cmd_tx = Some(browser_cmd_tx.clone());
 
-        // Create the tab bar first if not in headless mode
-        let tab_bar_height = if !self.headless {
-            let tab_cmd_tx = browser_cmd_tx.clone();
-            let tab_bar = TabBar::new(&window, move |cmd| {
-                match cmd {
-                    TabCommand::Create { url } => {
-                        let _ = tab_cmd_tx.send(BrowserCommand::CreateTab { url });
-                    }
-                    TabCommand::Close { id } => {
-                        let _ = tab_cmd_tx.send(BrowserCommand::CloseTab { id });
-                    }
-                    TabCommand::Switch { id } => {
-                        let _ = tab_cmd_tx.send(BrowserCommand::SwitchTab { id });
-                    }
-                }
-            })?;
-
-            self.tab_bar = Some(tab_bar);
-            40 // Tab bar height
-        } else {
-            0
-        };
-
         // Create initial tab if none exists
         if let Ok(mut tabs) = self.tabs.lock() {
             if tabs.get_all_tabs().is_empty() {
-                let default_url = "https://github.com/DanEdens/Tinker";
+                let default_url = DEFAULT_URL;
                 let id = tabs.create_tab(default_url.to_string());
 
                 // Create the initial WebView
@@ -221,9 +205,9 @@ impl BrowserEngine {
                     .with_visible(true)
                     .with_bounds(wry::Rect {
                         x: 0,
-                        y: tab_bar_height as i32,
+                        y: 40,  // Leave space for the tab bar
                         width: window_size.width,
-                        height: window_size.height.saturating_sub(tab_bar_height),
+                        height: window_size.height.saturating_sub(40),
                     })
                     .build()
                     .map_err(|e| {
@@ -237,28 +221,87 @@ impl BrowserEngine {
                 // Store the WebView in both the tab and as current content view
                 tabs.set_tab_webview(id, content_view.clone());
                 self.content_view = Some(content_view);
-
-                // Add the tab to the UI
-                if let Some(ref tab_bar) = self.tab_bar {
-                    tab_bar.add_tab(id, "New Tab", default_url);
-                    tab_bar.set_active_tab(id);
-                }
             }
+        }
+
+        // Create the window chrome if not in headless mode
+        if !self.headless {
+            let window_size = window.inner_size();
+            let window_handle = window.clone();
+            let chrome_view = WebViewBuilder::new(&window)
+                .with_html(&get_window_chrome())?
+                .with_transparent(true)
+                .with_visible(true)
+                .with_bounds(wry::Rect {
+                    x: 0,
+                    y: 0,
+                    width: window_size.width,
+                    height: 40,  // Fixed height for tab bar
+                })
+                .with_ipc_handler(move |msg: String| {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&msg) {
+                        match json["type"].as_str() {
+                            Some("WindowControl") => {
+                                if let Some(action) = json["action"].as_str() {
+                                    match action {
+                                        "minimize" => window_handle.set_minimized(true),
+                                        "maximize" => {
+                                            if window_handle.is_maximized() {
+                                                window_handle.set_maximized(false);
+                                            } else {
+                                                window_handle.set_maximized(true);
+                                            }
+                                        }
+                                        "close" => window_handle.set_visible(false),
+                                        _ => (),
+                                    }
+                                }
+                            }
+                            Some("TabCreated") => {
+                                if let Some(url) = json["url"].as_str() {
+                                    let _ = browser_cmd_tx.send(BrowserCommand::CreateTab {
+                                        url: url.to_string(),
+                                    });
+                                }
+                            }
+                            Some("TabClosed") => {
+                                if let Some(id) = json["id"].as_u64() {
+                                    let _ = browser_cmd_tx.send(BrowserCommand::CloseTab {
+                                        id: id as usize,
+                                    });
+                                }
+                            }
+                            Some("TabSwitched") => {
+                                if let Some(id) = json["id"].as_u64() {
+                                    let _ = browser_cmd_tx.send(BrowserCommand::SwitchTab {
+                                        id: id as usize,
+                                    });
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                })
+                .build()?;
+
+            let chrome_view = Arc::new(Mutex::new(chrome_view));
+            self.chrome_view = Some(chrome_view);
         }
 
         // Set up event handling
         let headless = self.headless;
         let events = self.events.clone();
+        let player = self.player.clone();
         let recorder = self.recorder.clone();
         let event_viewer = self.event_viewer.clone();
         let tabs = self.tabs.clone();
+        let recorder = self.recorder.clone();
         let tab_bar = self.tab_bar.clone();
-        let window = self.window.take();
-        let content_view = self.content_view.clone();
-        let engine = Arc::new(Mutex::new(self.clone()));
-        let tab_bar_height = tab_bar_height;
+        let mut content_view = self.content_view.clone();
+        let cmd_tx = self.cmd_tx.clone();
+        let window = window.clone();
+        let chrome_view = self.chrome_view.clone();
 
-        // Handle window resize events to adjust WebView sizes
         event_loop.run(move |event, _, control_flow| {
             *control_flow = if headless {
                 ControlFlow::Exit
@@ -271,14 +314,14 @@ impl BrowserEngine {
                     event: WindowEvent::Resized(new_size),
                     ..
                 } => {
-                    // Resize the tab bar
-                    if let Some(ref bar) = tab_bar {
-                        if let Ok(container) = bar.container.lock() {
-                            container.set_bounds(wry::Rect {
+                    // Resize the chrome view
+                    if let Some(ref view) = chrome_view {
+                        if let Ok(view) = view.lock() {
+                            view.set_bounds(wry::Rect {
                                 x: 0,
                                 y: 0,
                                 width: new_size.width,
-                                height: tab_bar_height,
+                                height: 40,  // Fixed height for chrome/tab bar
                             });
                         }
                     }
@@ -288,128 +331,124 @@ impl BrowserEngine {
                         if let Ok(view) = view.lock() {
                             view.set_bounds(wry::Rect {
                                 x: 0,
-                                y: tab_bar_height as i32,
+                                y: 40,  // Position below chrome/tab bar
                                 width: new_size.width,
-                                height: new_size.height.saturating_sub(tab_bar_height),
+                                height: new_size.height.saturating_sub(40),
                             });
                         }
                     }
                 }
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
-                    *control_flow = ControlFlow::Exit;
-                }
-                _ => (),
-            }
+                Event::MainEventsCleared => {
+                    // Handle browser commands
+                    while let Ok(cmd) = browser_cmd_rx.try_recv() {
+                        match cmd {
+                            BrowserCommand::CreateTab { url } => {
+                                if let Ok(mut tabs_guard) = tabs.lock() {
+                                    let id = tabs_guard.create_tab(url.clone());
 
-            // Handle browser commands
-            while let Ok(cmd) = browser_cmd_rx.try_recv() {
-                match cmd {
-                    BrowserCommand::CreateTab { url } => {
-                        if let Ok(mut tabs) = tabs.lock() {
-                            let id = tabs.create_tab(url.clone());
-                            info!("Created new tab {} with URL: {}", id, url);
-
-                            // Update tab UI
-                            if let Some(ref bar) = tab_bar {
-                                bar.add_tab(id, "New Tab", &url);
-                                bar.set_active_tab(id);
+                                    // Create a new WebView for the tab
+                                    let window_size = window.inner_size();
+                                    match WebViewBuilder::new(&*window)
+                                        .with_url(&url)
+                                        .expect("Failed to set URL")
+                                        .with_initialization_script("
+                                            window.addEventListener('DOMContentLoaded', () => {
+                                                // Add any initialization code here
+                                            });
+                                        ")
+                                        .with_bounds(wry::Rect {
+                                            x: 0,
+                                            y: 40,  // Position below chrome/tab bar
+                                            width: window_size.width,
+                                            height: window_size.height.saturating_sub(40),
+                                        })
+                                        .build()
+                                    {
+                                        Ok(new_view) => {
+                                            let new_view = Arc::new(Mutex::new(new_view));
+                                            
+                                            // Store the WebView in the tab
+                                            if let Ok(mut tabs_guard) = tabs.lock() {
+                                                tabs_guard.set_tab_webview(id, new_view.clone());
+                                            }
+                                            
+                                            // Update tab bar
+                                            if let Some(ref tab_bar) = tab_bar {
+                                                if let Ok(mut bar) = tab_bar.lock() {
+                                                    bar.add_tab(id, "New Tab");
+                                                    bar.set_active_tab(id);
+                                                }
+                                            }
+                                            
+                                            // Set as current content view
+                                            content_view = Some(new_view);
+                                        }
+                                        Err(e) => error!("Failed to create WebView: {}", e)
+                                    }
+                                }
                             }
-
-                            // Create a new WebView for the tab
-                            if let Some(window) = &window {
-                                let window_size = window.inner_size();
-                                match WebViewBuilder::new(&**window)
-                                    .with_url(&url)
-                                    .map_err(|e| {
-                                        error!("Failed to set WebView URL: {}", e);
-                                        e
-                                    })
-                                    .map(|builder| {
-                                        builder
-                                            .with_initialization_script("
-                                                document.documentElement.style.background = '#ffffff';
-                                                document.body.style.background = '#ffffff';
-                                            ")
-                                            .with_transparent(false)
-                                            .with_visible(true)
-                                            .with_bounds(wry::Rect {
-                                                x: 0,
-                                                y: tab_bar_height as i32,
-                                                width: window_size.width,
-                                                height: window_size.height.saturating_sub(tab_bar_height),
-                                            })
-                                            .build()
-                                    })
-                                    .and_then(|result| result.map_err(|e| {
-                                        error!("Failed to build WebView: {}", e);
-                                        e
-                                    })) {
-                                    Ok(new_view) => {
-                                        let new_view = Arc::new(Mutex::new(new_view));
-                                        
-                                        // Store the WebView in the tab
-                                        tabs.set_tab_webview(id, new_view.clone());
-                                        
-                                        // Set as current content view
-                                        if let Ok(mut engine) = engine.lock() {
-                                            engine.content_view = Some(new_view);
+                            BrowserCommand::Navigate { url } => {
+                                if let Some(ref view) = content_view {
+                                    if let Ok(view) = view.lock() {
+                                        view.load_url(&url);
+                                    }
+                                }
+                            }
+                            BrowserCommand::CloseTab { id } => {
+                                if let Ok(mut tabs_guard) = tabs.lock() {
+                                    if tabs_guard.close_tab(id) {
+                                        if let Some(ref tab_bar) = tab_bar {
+                                            if let Ok(mut bar) = tab_bar.lock() {
+                                                bar.remove_tab(id);
+                                            }
                                         }
                                     }
-                                    Err(e) => error!("Failed to create WebView: {}", e)
                                 }
                             }
-                        }
-                    }
-                    BrowserCommand::Navigate { url } => {
-                        if let Some(ref view) = content_view {
-                            if let Ok(view) = view.lock() {
-                                view.load_url(&url);
-                            }
-                        }
-                    }
-                    BrowserCommand::CloseTab { id } => {
-                        if let Ok(mut tabs) = tabs.lock() {
-                            if tabs.close_tab(id) {
-                                if let Some(ref bar) = tab_bar {
-                                    bar.remove_tab(id);
+                            BrowserCommand::SwitchTab { id } => {
+                                if let Ok(mut tabs_guard) = tabs.lock() {
+                                    if tabs_guard.switch_to_tab(id) {
+                                        if let Some(ref tab_bar) = tab_bar {
+                                            if let Ok(mut bar) = tab_bar.lock() {
+                                                bar.set_active_tab(id);
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                        }
-                    }
-                    BrowserCommand::SwitchTab { id } => {
-                        if let Ok(mut tabs) = tabs.lock() {
-                            if tabs.switch_to_tab(id) {
-                                if let Some(ref bar) = tab_bar {
-                                    bar.set_active_tab(id);
+                            BrowserCommand::RecordEvent { event } => {
+                                if let Ok(mut recorder_guard) = recorder.lock() {
+                                    recorder_guard.record_event(event);
                                 }
+                            }
+                            BrowserCommand::PlayEvent { event } => {
+                                // For now, we'll just log the event since we need to implement proper event playback
+                                debug!("Event playback not yet implemented: {:?}", event);
+                            }
+                            BrowserCommand::Menu(cmd) => {
+                                Self::handle_menu_command(
+                                    &tabs,
+                                    &tab_bar,
+                                    &content_view,
+                                    &cmd_tx,
+                                    cmd
+                                );
                             }
                         }
                     }
-                    BrowserCommand::RecordEvent { event } => {
-                        if let Ok(mut recorder) = recorder.lock() {
-                            recorder.record_event(event);
-                        }
-                    }
-                    BrowserCommand::PlayEvent { event } => {
-                        // For now, we'll just log the event since we need to implement proper event playback
-                        debug!("Event playback not yet implemented: {:?}", event);
-                    }
-                    BrowserCommand::Menu(cmd) => {
-                        if let Ok(mut engine) = engine.lock() {
-                            engine.handle_menu_command(cmd);
-                        }
-                    }
-                }
-            }
 
-            // Handle menu commands
-            while let Ok(cmd) = menu_cmd_rx.try_recv() {
-                if let Ok(mut engine) = engine.lock() {
-                    engine.handle_menu_command(cmd);
+                    // Handle menu commands
+                    while let Ok(cmd) = menu_cmd_rx.try_recv() {
+                        Self::handle_menu_command(
+                            &tabs,
+                            &tab_bar,
+                            &content_view,
+                            &cmd_tx,
+                            cmd
+                        );
+                    }
                 }
+                _ => {}
             }
         });
 
@@ -423,8 +462,10 @@ impl BrowserEngine {
             
             // Update tab UI
             if let Some(tab_bar) = &self.tab_bar {
-                tab_bar.add_tab(id, "New Tab", url);
-                tab_bar.set_active_tab(id);
+                if let Ok(mut bar) = tab_bar.lock() {
+                    bar.add_tab(id, "New Tab");
+                    bar.set_active_tab(id);
+                }
             }
 
             // Update content view
@@ -448,85 +489,123 @@ impl BrowserEngine {
         }
     }
 
-    fn handle_menu_command(&mut self, cmd: MenuCommand) {
-        use menu::MenuCommand::*;
+    fn handle_menu_command(
+        tabs: &Arc<Mutex<TabManager>>,
+        tab_bar: &Option<Arc<Mutex<NativeTabBar>>>,
+        content_view: &Option<Arc<Mutex<WebView>>>,
+        cmd_tx: &Option<Sender<BrowserCommand>>,
+        cmd: MenuCommand
+    ) {
         match cmd {
-            NewTab => {
-                let _ = self.create_tab("about:blank");
+            MenuCommand::NewTab => {
+                if let Some(cmd_tx) = cmd_tx {
+                    let _ = cmd_tx.send(BrowserCommand::CreateTab {
+                        url: DEFAULT_URL.to_string(),
+                    });
+                }
             }
-            NewWindow => {
-                debug!("New window functionality not yet implemented");
-            }
-            CloseTab => {
-                if let Ok(tabs) = self.tabs.lock() {
+            MenuCommand::CloseTab => {
+                if let Ok(tabs) = tabs.lock() {
                     if let Some(active_tab) = tabs.get_active_tab() {
-                        let id = active_tab.id;
-                        drop(tabs); // Release the lock before sending command
-                        if let Some(cmd_tx) = &self.cmd_tx {
-                            let _ = cmd_tx.send(BrowserCommand::CloseTab { id });
+                        if let Some(cmd_tx) = cmd_tx {
+                            let _ = cmd_tx.send(BrowserCommand::CloseTab { 
+                                id: active_tab.id 
+                            });
                         }
                     }
                 }
             }
-            CloseWindow => {
-                if let Some(window) = &self.window {
-                    let _ = window.set_visible(false);
-                    // The window will be closed when the event loop receives the CloseRequested event
-                }
+            MenuCommand::NewWindow => {
+                debug!("New window functionality not yet implemented");
             }
-            ZoomIn => {
-                if let Some(view) = &self.content_view {
+            MenuCommand::CloseWindow => {
+                debug!("Close window functionality not yet implemented");
+            }
+            MenuCommand::ZoomIn => {
+                if let Some(ref view) = content_view {
                     if let Ok(view) = view.lock() {
                         let _ = view.evaluate_script("document.body.style.zoom = (parseFloat(document.body.style.zoom || '1.0') * 1.1).toString()");
                     }
                 }
             }
-            ZoomOut => {
-                if let Some(view) = &self.content_view {
+            MenuCommand::ZoomOut => {
+                if let Some(ref view) = content_view {
                     if let Ok(view) = view.lock() {
                         let _ = view.evaluate_script("document.body.style.zoom = (parseFloat(document.body.style.zoom || '1.0') * 0.9).toString()");
                     }
                 }
             }
-            ZoomReset => {
-                if let Some(view) = &self.content_view {
+            MenuCommand::ZoomReset => {
+                if let Some(ref view) = content_view {
                     if let Ok(view) = view.lock() {
                         let _ = view.evaluate_script("document.body.style.zoom = '1.0'");
                     }
                 }
             }
-            ToggleDevTools => {
+            MenuCommand::ToggleDevTools => {
                 debug!("DevTools functionality not yet implemented");
             }
-            StartRecording => {
-                self.start_recording("test_recording.json");
+            MenuCommand::StartRecording => {
+                debug!("Recording functionality not yet implemented");
             }
-            StopRecording => {
-                self.stop_recording();
+            MenuCommand::StopRecording => {
+                debug!("Stop recording functionality not yet implemented");
             }
-            RunTests => {
+            MenuCommand::RunTests => {
                 debug!("Test runner not yet implemented");
             }
-            ViewTestReport => {
+            MenuCommand::ViewTestReport => {
                 debug!("Test report viewer not yet implemented");
             }
-            SwitchEngine(engine) => {
-                debug!("Engine switching not yet implemented: {}", engine);
+            MenuCommand::SwitchEngine(_) => {
+                debug!("Engine switching not yet implemented");
             }
-            OpenJsConsole => {
+            MenuCommand::OpenJsConsole => {
                 debug!("JavaScript console not yet implemented");
             }
-            OpenPerformanceMonitor => {
+            MenuCommand::OpenPerformanceMonitor => {
                 debug!("Performance monitor not yet implemented");
             }
-            OpenDocumentation => {
-                let _ = self.create_tab("https://github.com/DanEdens/Tinker/wiki");
+            MenuCommand::OpenDocumentation => {
+                if let Some(cmd_tx) = cmd_tx {
+                    let _ = cmd_tx.send(BrowserCommand::CreateTab {
+                        url: "https://github.com/DanEdens/Tinker/wiki".to_string(),
+                    });
+                }
             }
-            ReportIssue => {
-                let _ = self.create_tab("https://github.com/DanEdens/Tinker/issues/new");
+            MenuCommand::ReportIssue => {
+                if let Some(cmd_tx) = cmd_tx {
+                    let _ = cmd_tx.send(BrowserCommand::CreateTab {
+                        url: "https://github.com/DanEdens/Tinker/issues/new".to_string(),
+                    });
+                }
             }
-            About => {
+            MenuCommand::About => {
                 debug!("About dialog not yet implemented");
+            }
+        }
+    }
+
+    pub fn add_tab(&self, id: usize, title: &str) {
+        if let Some(tab_bar) = &self.tab_bar {
+            if let Ok(mut bar) = tab_bar.lock() {
+                bar.add_tab(id, title);
+            }
+        }
+    }
+
+    pub fn remove_tab(&self, id: usize) {
+        if let Some(tab_bar) = &self.tab_bar {
+            if let Ok(mut bar) = tab_bar.lock() {
+                bar.remove_tab(id);
+            }
+        }
+    }
+
+    pub fn set_active_tab(&self, id: usize) {
+        if let Some(tab_bar) = &self.tab_bar {
+            if let Ok(mut bar) = tab_bar.lock() {
+                bar.set_active_tab(id);
             }
         }
     }
