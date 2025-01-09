@@ -175,6 +175,15 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
 
 ## Lessons Learned
 
+### AI Pair Programming
+- Test coverage drives AI decision making - untested features may be removed during refactoring
+- Using git history in conversations helps AI understand and restore previously working code
+- Maintaining a "Lessons Learned" section helps keep important details in focus during iterations
+- When dealing with complex UI elements, instruct AI to comment out code instead of deleting
+- Clean commits with clear messages improve AI's ability to reference past solutions
+- Complex UI features require comprehensive test coverage to prevent unintended removal
+- Git squashing can improve the usefulness of commit history in AI conversations
+
 ### WebView Management
 - WebView instances should be owned by their respective tabs
 - Strong references to parent windows must be maintained
