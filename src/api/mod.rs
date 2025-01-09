@@ -12,7 +12,7 @@ pub async fn start_api_server() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/health", get(health_check));
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3003));
     info!("API server listening on {}", addr);
 
     axum::Server::bind(&addr)
@@ -27,4 +27,4 @@ async fn health_check() -> Json<serde_json::Value> {
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION")
     }))
-} 
+}

@@ -178,13 +178,25 @@ impl BrowserEngine {
     pub fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
         debug!("Starting browser engine...");
 
+        if self.headless {
+            // In headless mode, we don't need to create a window or event loop
+            // Just perform the necessary operations and return
+            if let Ok(mut tabs) = self.tabs.lock() {
+                if tabs.get_all_tabs().is_empty() {
+                    let id = tabs.create_tab("about:blank".to_string());
+                    info!("Created initial tab {} in headless mode", id);
+                }
+            }
+            return Ok(());
+        }
+
         let event_loop = EventLoop::new();
 
         // Create the main window
         let window_builder = WindowBuilder::new()
             .with_title("Tinker Browser")
             .with_inner_size(LogicalSize::new(1024.0, 768.0))
-            .with_decorations(!self.headless);
+            .with_decorations(true);
 
         let window = window_builder.build(&event_loop)?;
         let window = Arc::new(window);
@@ -298,7 +310,6 @@ impl BrowserEngine {
         }
 
         // Set up event handling
-        let headless = self.headless;
         let events = self.events.clone();
         let recorder = self.recorder.clone();
         let event_viewer = self.event_viewer.clone();
@@ -309,29 +320,21 @@ impl BrowserEngine {
         // Move content_view into the event loop
         let mut content_view = self.content_view.clone();
 
-        // If in headless mode, set up a timer to exit after initialization
-        if headless {
-            let exit_timer = std::time::Instant::now() + std::time::Duration::from_secs(1);
-            *control_flow = ControlFlow::WaitUntil(exit_timer);
-        } else {
-            *control_flow = ControlFlow::Wait;
-        }
-
+        // Set up the event loop
         event_loop.run(move |event, _, control_flow| {
             match event {
                 Event::NewEvents(_) => {
-                    if headless {
-                        let now = std::time::Instant::now();
-                        if now >= exit_timer {
-                            *control_flow = ControlFlow::Exit;
-                            return;
-                        }
-                    }
+                    *control_flow = ControlFlow::Wait;
                 }
                 Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
                     ..
                 } => {
+                    // Clean up resources before exiting
+                    content_view = None;
+                    if let Some(window) = &window {
+                        window.set_visible(false);
+                    }
                     *control_flow = ControlFlow::Exit;
                 }
                 Event::WindowEvent {
@@ -355,6 +358,13 @@ impl BrowserEngine {
                                 });
                             }
                         }
+                    }
+                }
+                Event::LoopDestroyed => {
+                    // Clean up resources when the event loop is destroyed
+                    content_view = None;
+                    if let Some(window) = &window {
+                        window.set_visible(false);
                     }
                 }
                 _ => (),
@@ -520,160 +530,22 @@ impl BrowserEngine {
                                                     }
                                                 }
                                             })
-                                            .with_transparent(false)
-                                            .with_visible(true)
-                                            .with_navigation_handler(move |url| {
-                                                debug!("Navigation requested to: {}", url);
-                                                true // Allow all navigation
-                                            })
                                             .build()
-                                    })
-                                    .and_then(|result| result.map_err(|e| {
-                                        error!("Failed to build WebView: {}", e);
-                                        e
-                                    })) {
-                                    Ok(new_view) => {
-                                        let new_view = Arc::new(Mutex::new(new_view));
-
-                                        // Store the WebView in the tab
-                                        tabs.set_tab_webview(id, new_view.clone());
-
-                                        // Set as current content view
-                                        content_view = Some(new_view);
-
-                                        // Publish events
-                                        if let Some(events) = &events {
-                                            if let Ok(mut events) = events.lock() {
-                                                let _ = events.publish(BrowserEvent::TabCreated { id });
-                                                let _ = events.publish(BrowserEvent::TabUrlChanged {
-                                                    id,
-                                                    url: url.clone()
-                                                });
-                                            }
-                                        }
+                                    }) {
+                                    Ok(Ok(view)) => {
+                                        let webview = Arc::new(Mutex::new(view));
+                                        tabs.set_tab_webview(id, webview.clone());
+                                        content_view = Some(webview);
                                     }
-                                    Err(e) => error!("Failed to create WebView: {}", e)
+                                    _ => error!("Failed to create WebView for tab {}", id),
                                 }
                             }
                         }
                     }
-                    BrowserCommand::CloseTab { id } => {
-                        if let Ok(mut tabs) = tabs.lock() {
-                            if tabs.close_tab(id) {
-                                if let Some(ref bar) = &tab_bar {
-                                    bar.remove_tab(id as u32);
-                                    if let Some(active_tab) = tabs.get_active_tab() {
-                                        bar.set_active_tab(active_tab.id as u32);
-                                        if let Some(ref view) = content_view {
-                                            if let Ok(view) = view.lock() {
-                                                view.load_url(&active_tab.url);
-                                            }
-                                        }
-                                    }
-                                }
-                                let _ = self.publish_event(BrowserEvent::TabClosed { id });
-                            }
-                        }
-                    }
-                    BrowserCommand::SwitchTab { id } => {
-                        if let Ok(mut tabs) = tabs.lock() {
-                            if tabs.switch_to_tab(id) {
-                                if let Some(ref bar) = &tab_bar {
-                                    bar.set_active_tab(id as u32);
-                                }
-
-                                // Switch to the tab's WebView
-                                if let Some(webview) = tabs.get_tab_webview(id) {
-                                    content_view = Some(webview.clone());
-                                }
-
-                                let _ = self.publish_event(BrowserEvent::TabSwitched { id });
-                            }
-                        }
-                    }
-                    BrowserCommand::RecordEvent { event } => {
-                        if let Ok(mut recorder) = recorder.lock() {
-                            recorder.record_event(event.clone());
-                        }
-                        if let Ok(mut event_viewer) = event_viewer.lock() {
-                            event_viewer.add_event(event);
-                        }
-                    }
-                    BrowserCommand::PlayEvent { event } => {
-                        match &event {
-                            BrowserEvent::Navigation { url } => {
-                                if let Some(ref view) = content_view {
-                                    if let Ok(view) = view.lock() {
-                                        view.load_url(url);
-                                    }
-                                }
-                            }
-                            BrowserEvent::TabCreated { .. } => {
-                                if let Ok(mut tabs) = tabs.lock() {
-                                    let id = tabs.create_tab("about:blank".to_string());
-                                    if let Some(ref bar) = &tab_bar {
-                                        bar.add_tab(id.try_into().unwrap(), "New Tab", "about:blank");
-                                        bar.set_active_tab(id.try_into().unwrap());
-                                    }
-                                }
-                            }
-                            BrowserEvent::TabClosed { id } => {
-                                if let Ok(mut tabs) = tabs.lock() {
-                                    if tabs.close_tab(*id) {
-                                        if let Some(ref bar) = &tab_bar {
-                                            bar.remove_tab(*id as u32);
-                                        }
-                                    }
-                                }
-                            }
-                            BrowserEvent::TabSwitched { id } => {
-                                if let Ok(mut tabs) = tabs.lock() {
-                                    if tabs.switch_to_tab(*id) {
-                                        if let Some(ref bar) = &tab_bar {
-                                            bar.set_active_tab(*id as u32);
-                                        }
-                                    }
-                                }
-                            }
-                            BrowserEvent::TabUrlChanged { id, url } => {
-                                if let Ok(mut tabs) = tabs.lock() {
-                                    if let Some(tab) = tabs.get_tab_mut(*id) {
-                                        tab.url = url.clone();
-                                        if let Some(ref bar) = &tab_bar {
-                                            bar.update_tab_url((*id) as u32, url);
-                                        }
-                                    }
-                                }
-                            }
-                            BrowserEvent::TabTitleChanged { id, title } => {
-                                if let Ok(mut tabs) = tabs.lock() {
-                                    if let Some(tab) = tabs.get_tab_mut(*id) {
-                                        tab.title = title.clone();
-                                        if let Some(ref bar) = &tab_bar {
-                                            bar.update_tab_title((*id) as u32, title);
-                                        }
-                                    }
-                                }
-                            }
-                            BrowserEvent::PageLoaded { url } => {
-                                debug!("Replaying page load: {}", url);
-                            }
-                            BrowserEvent::TitleChanged { title } => {
-                                if let Some(ref window) = window {
-                                    window.set_title(&format!("{} - Tinker Browser", title));
-                                }
-                            }
-                            BrowserEvent::Error { message } => {
-                                error!("Replaying error event: {}", message);
-                            }
-                        }
-                    }
+                    _ => {}
                 }
             }
-        });
-
-        #[allow(unreachable_code)]
-        Ok(())
+        })
     }
 
     pub fn create_tab(&mut self, url: &str) -> Result<usize, String> {
