@@ -346,12 +346,14 @@ This section maintains a structured knowledge graph for AI assistants working on
 }
 
 3. Testing {
-   - Write unit tests for new features
-   - Update integration tests
-   - Document test scenarios
-   - Handle edge cases
-   - Ensure comprehensive test coverage for complex UI features
-   - Test error handling paths
+   - Use `DEBUG=TRUE cargo test -- --nocapture | cat` for detailed debug output
+   - Add new tests for new functionality
+   - Use meaningful test names that describe the behavior being tested
+   - Update existing integration and unit tests when modifying behavior
+   - Document features by writing tests
+   - Bring up possible edge cases
+   - Test error handling should check for test viability as well as syntax errors.
+   - Ask user if things might need to change dramatically to fix.
    - Verify state synchronization in multi-threaded operations
    - Test cleanup and resource management
 }
