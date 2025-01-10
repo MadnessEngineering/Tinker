@@ -77,3 +77,25 @@
 - Error handling should be comprehensive and user-friendly
 - Event handlers should be properly scoped and cleaned up
 - Event propagation should be predictable and traceable
+
+### Code Organization
+- Avoid circular dependencies by keeping related types in the same module
+- Place commands and events together when they share common data structures
+- Use public helper methods to encapsulate common state checks
+- Keep template files in a dedicated directory with clear naming
+- Maintain clear separation between UI and business logic
+
+### Error Handling
+- Convert WebView errors to String for consistent error handling
+- Use map_err for error type conversion instead of custom match blocks
+- Release locks before performing operations that might need them
+- Handle all potential error cases in tab management
+- Provide clear error messages for debugging
+- Check lock acquisition success before using Mutex guards
+
+### Thread Safety
+- Use Arc<Mutex<T>> for shared state between threads
+- Release locks as soon as possible to prevent deadlocks
+- Clone command channels before moving into closures
+- Ensure proper lock cleanup in error cases
+- Use dedicated methods for checking state to avoid lock contention
