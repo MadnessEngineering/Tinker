@@ -38,10 +38,11 @@ pub struct BrowserEngine {
     pub tab_bar: Option<TabBar>,
     pub content_view: Option<Arc<Mutex<WebView>>>,
     pub window: Option<Arc<Window>>,
+    pub initial_url: Option<String>,
 }
 
 impl BrowserEngine {
-    pub fn new(headless: bool, events: Option<Arc<Mutex<EventSystem>>>) -> Self {
+    pub fn new(headless: bool, events: Option<Arc<Mutex<EventSystem>>>, initial_url: Option<String>) -> Self {
         if let Some(ref events) = events {
             if let Ok(_events) = events.lock() {
                 info!("Browser engine initialized with event system");
@@ -62,6 +63,7 @@ impl BrowserEngine {
             tab_bar: None,
             content_view: None,
             window: None,
+            initial_url,
         }
     }
 
@@ -240,160 +242,95 @@ impl BrowserEngine {
         }
     }
 
-    pub fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
-        debug!("Starting browser engine...");
-
-        if self.headless {
-            // In headless mode, we don't need to create a window or event loop
-            // Just perform the necessary operations and return
-            if let Ok(mut tabs) = self.tabs.lock() {
-                if tabs.get_all_tabs().is_empty() {
-                    let id = tabs.create_tab("about:blank".to_string());
-                    info!("Created initial tab {} in headless mode", id);
-                }
-            }
-            return Ok(());
-        }
-
-        let event_loop = EventLoop::new();
-
-        // Create the main window
-        let window_builder = WindowBuilder::new()
-            .with_title("Tinker Browser")
-            .with_inner_size(LogicalSize::new(1024.0, 768.0))
-            .with_decorations(true);
-
-        let window = window_builder.build(&event_loop)?;
-        let window = Arc::new(window);
-        self.window = Some(window.clone());
-
-        // Create channels for browser commands and tab commands
-        let (cmd_tx, cmd_rx) = channel::<BrowserCommand>();
-        let (tab_tx, tab_rx) = channel::<TabCommand>();
-
-        // Create the tab bar first
-        let tab_bar = TabBar::new(&window, tab_tx.clone())?;
-        self.tab_bar = Some(tab_bar);
-
-        // Initialize WebView
-        let _browser_clone = Arc::new(Mutex::new(self.clone()));
-        let cmd_tx_for_ipc = cmd_tx.clone();
-        let webview = WebViewBuilder::new(&window)
-            .with_bounds(wry::Rect {
-                x: 0_i32,
-                y: 40 as i32,
-                width: window.inner_size().width,
-                height: window.inner_size().height.saturating_sub(40),
-            })
-            .with_initialization_script(include_str!("../templates/window_chrome.js"))
-            .with_html(include_str!("../templates/window_chrome.html"))
-            .map_err(|e| e.to_string())?
-            .with_ipc_handler(move |msg: String| {
-                if let Ok(cmd) = serde_json::from_str::<BrowserCommand>(&msg) {
-                    let _ = cmd_tx_for_ipc.send(cmd);
-                }
-            })
-            .build()
-            .map_err(|e| e.to_string())?;
+    pub fn run(&mut self) -> Result<(), String> {
+        debug!("Starting browser engine");
         
-        // Set initial WebView bounds
-        let size = window.inner_size();
-        let tab_height: u32 = 40;
-        webview.set_bounds(wry::Rect {
-            x: 0,
-            y: tab_height as i32,
-            width: size.width,
-            height: size.height.saturating_sub(tab_height),
-        });
+        let event_loop = EventLoop::new().map_err(|e| format!("Failed to create event loop: {}", e))?;
+        let window = WindowBuilder::new()
+            .with_title("Browser")
+            .with_inner_size(LogicalSize::new(800, 600))
+            .build(&event_loop)
+            .map_err(|e| format!("Failed to create window: {}", e))?;
 
-        self.content_view = Some(Arc::new(Mutex::new(webview)));
+        debug!("Created main window");
 
-        // Create initial tab if none exists
-        if let Ok(mut tabs) = self.tabs.lock() {
-            if tabs.get_all_tabs().is_empty() {
-                let id = tabs.create_tab("about:blank".to_string());
-                self.publish_event(BrowserEvent::TabCreated { 
-                    id,
-                    url: "about:blank".to_string()
-                })?;
-                info!("Created initial tab {}", id);
-            }
+        // Create command channel for tab bar
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+
+        // Create tab bar if not in headless mode
+        if !self.headless {
+            debug!("Creating tab bar");
+            self.tab_bar = Some(TabBar::new(&window, cmd_tx).map_err(|e| format!("Failed to create tab bar: {}", e))?);
+            debug!("Tab bar created successfully");
         }
 
-        // Store command sender for event system
-        let cmd_tx_clone = cmd_tx.clone();
-        if let Some(events) = &self.events {
-            if let Ok(mut events) = events.lock() {
-                events.set_command_sender(cmd_tx_clone);
-            }
+        // Create initial tab if URL provided
+        if let Some(ref url) = self.initial_url {
+            debug!("Creating initial tab with URL: {}", url);
+            self.create_tab(url)?;
+            debug!("Initial tab created successfully");
         }
 
-        let mut browser = self;
-        event_loop.run(move |event, _, control_flow| {
+        let browser = Arc::new(Mutex::new(self));
+        
+        debug!("Starting event loop");
+        
+        event_loop.run(move |event, window_target, control_flow| {
             *control_flow = ControlFlow::Wait;
+
+            // Handle tab commands
+            if let Ok(cmd) = cmd_rx.try_recv() {
+                let browser = browser.clone();
+                if let Ok(mut browser) = browser.lock() {
+                    match cmd {
+                        TabCommand::Create { url } => {
+                            if let Err(e) = browser.create_tab(&url) {
+                                error!("Failed to create tab: {}", e);
+                            }
+                        },
+                        TabCommand::Close { id } => {
+                            if let Err(e) = browser.close_tab(id) {
+                                error!("Failed to close tab: {}", e);
+                            }
+                        },
+                        TabCommand::Switch { id } => {
+                            if let Err(e) = browser.switch_to_tab(id) {
+                                error!("Failed to switch tab: {}", e);
+                            }
+                        },
+                        TabCommand::UpdateUrl { id, url } => {
+                            if let Err(e) = browser.update_tab_content(id, &url) {
+                                error!("Failed to update tab URL: {}", e);
+                            }
+                        },
+                        TabCommand::UpdateTitle { id, title } => {
+                            if let Ok(mut tabs) = browser.tabs.lock() {
+                                if let Some(tab) = tabs.get_tab_mut(id) {
+                                    tab.title = title;
+                                }
+                            }
+                        },
+                    }
+                }
+            }
 
             match event {
                 Event::WindowEvent { event, .. } => {
-                    match event {
-                        WindowEvent::CloseRequested => {
-                            *control_flow = ControlFlow::Exit;
+                    let browser = browser.clone();
+                    if let Ok(mut browser) = browser.lock() {
+                        if let Err(e) = browser.handle_window_event(&event, &window) {
+                            error!("Error handling window event: {}", e);
                         }
-                        _ => {
-                            if let Err(e) = browser.handle_window_event(&event, &window) {
-                                error!("Failed to handle window event: {}", e);
-                            }
+                        
+                        if let WindowEvent::CloseRequested = event {
+                            debug!("Window close requested, exiting");
+                            *control_flow = ControlFlow::Exit;
                         }
                     }
                 }
                 _ => (),
             }
-
-            // Process any pending commands
-            if let Ok(cmd) = cmd_rx.try_recv() {
-                if let Err(e) = browser.handle_command(cmd) {
-                    error!("Failed to handle command: {}", e);
-                }
-            }
-
-            // Process any pending tab commands
-            if let Ok(cmd) = tab_rx.try_recv() {
-                if let Some(ref tab_bar) = browser.tab_bar {
-                    match cmd {
-                        TabCommand::UpdateUrl { id, url } => {
-                            tab_bar.update_tab_url(id, &url);
-                        },
-                        TabCommand::UpdateTitle { id, title } => {
-                            tab_bar.update_tab_title(id, &title);
-                        },
-                        TabCommand::Create { url } => {
-                            if let Ok(mut tabs) = browser.tabs.lock() {
-                                let id = tabs.create_tab(url.clone());
-                                browser.publish_event(BrowserEvent::TabCreated { 
-                                    id,
-                                    url: url.clone() 
-                                }).unwrap_or_else(|e| error!("Failed to publish tab created event: {}", e));
-                            }
-                        },
-                        TabCommand::Close { id } => {
-                            if let Ok(mut tabs) = browser.tabs.lock() {
-                                if tabs.close_tab(id) {
-                                    browser.publish_event(BrowserEvent::TabClosed { id })
-                                        .unwrap_or_else(|e| error!("Failed to publish tab closed event: {}", e));
-                                }
-                            }
-                        },
-                        TabCommand::Switch { id } => {
-                            if let Ok(mut tabs) = browser.tabs.lock() {
-                                if tabs.switch_to_tab(id) {
-                                    browser.publish_event(BrowserEvent::TabActivated { id })
-                                        .unwrap_or_else(|e| error!("Failed to publish tab activated event: {}", e));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        })
     }
 
     pub fn create_tab(&mut self, url: &str) -> Result<usize, String> {
@@ -736,6 +673,7 @@ impl BrowserEngine {
     fn handle_window_event(&mut self, event: &WindowEvent, window: &Window) -> Result<(), String> {
         match event {
             WindowEvent::Resized(size) => {
+                debug!("Handling window resize: {:?}", size);
                 // Update both tab bar and content view bounds
                 let tab_height: u32 = 40;
                 
@@ -757,8 +695,56 @@ impl BrowserEngine {
                 }
                 Ok(())
             }
+            WindowEvent::KeyboardInput { 
+                device_id: _,
+                event,
+                is_synthetic: _,
+            } => {
+                debug!("Handling keyboard input: {:?}", event);
+                if let Some(physical_key) = event.physical_key {
+                    use tao::keyboard::Key;
+                    match physical_key {
+                        Key::Character("t") if event.modifiers.control_key() => {
+                            // Create new tab
+                            if let Err(e) = self.create_tab("about:blank") {
+                                error!("Failed to create tab: {}", e);
+                            }
+                        }
+                        Key::Character("w") if event.modifiers.control_key() => {
+                            // Close current tab
+                            if let Ok(tabs) = self.tabs.lock() {
+                                if let Some(active_tab) = tabs.get_active_tab() {
+                                    let id = active_tab.id;
+                                    drop(tabs); // Release lock before closing tab
+                                    if let Err(e) = self.close_tab(id) {
+                                        error!("Failed to close tab: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        Key::Tab if event.modifiers.control_key() => {
+                            // Switch to next tab
+                            if let Ok(tabs) = self.tabs.lock() {
+                                let current_id = tabs.get_active_tab().map(|t| t.id).unwrap_or(0);
+                                let all_tabs = tabs.get_all_tabs();
+                                if let Some(next_tab) = all_tabs.iter()
+                                    .find(|t| t.id > current_id)
+                                    .or_else(|| all_tabs.first()) {
+                                    let id = next_tab.id;
+                                    drop(tabs); // Release lock before switching
+                                    if let Err(e) = self.switch_to_tab(id) {
+                                        error!("Failed to switch tab: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(())
+            }
             WindowEvent::CloseRequested => {
-                // Set control flow to exit in the event loop
+                debug!("Window close requested");
                 Ok(())
             }
             _ => Ok(())
@@ -778,6 +764,7 @@ impl Clone for BrowserEngine {
             tab_bar: self.tab_bar.clone(),
             content_view: self.content_view.clone(),
             window: self.window.clone(),
+            initial_url: self.initial_url.clone(),
         }
     }
 }
