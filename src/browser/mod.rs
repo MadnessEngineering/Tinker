@@ -5,10 +5,11 @@ use std::{
     time::{Duration, Instant},
 };
 use tao::{
-    event::{Event, WindowEvent},
+    event::{Event, WindowEvent, ElementState},
     event_loop::{ControlFlow, EventLoop},
     window::{WindowBuilder, Window},
     dpi::LogicalSize,
+    keyboard::ModifiersState,
 };
 use wry::{WebView, WebViewBuilder};
 use tracing::{debug, info, error};
@@ -114,7 +115,7 @@ impl BrowserEngine {
                 if let Err(e) = view.evaluate_script(&format!("window.ipc.handleMessage('{}')", msg.to_string())) {
                     error!("Failed to send navigation message to WebView: {}", e);
                 }
-                
+
                 // Load the URL
                 view.load_url(url);
             }
@@ -203,7 +204,7 @@ impl BrowserEngine {
                                 break;
                             }
                         }
-                        
+
                         // Sleep a bit to prevent busy waiting
                         if last_check.elapsed() < Duration::from_millis(10) {
                             std::thread::sleep(Duration::from_millis(1));
@@ -245,7 +246,7 @@ impl BrowserEngine {
     pub fn run(&mut self) -> Result<(), String> {
         debug!("Starting browser engine");
         
-        let event_loop = EventLoop::new().map_err(|e| format!("Failed to create event loop: {}", e))?;
+        let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
             .with_title("Browser")
             .with_inner_size(LogicalSize::new(800, 600))
@@ -257,6 +258,10 @@ impl BrowserEngine {
         // Create command channel for tab bar
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
 
+        // Create content view
+        self.create_content_view(&window)?;
+        debug!("Content view created successfully");
+
         // Create tab bar if not in headless mode
         if !self.headless {
             debug!("Creating tab bar");
@@ -264,23 +269,31 @@ impl BrowserEngine {
             debug!("Tab bar created successfully");
         }
 
+        // Store window reference
+        let window = Arc::new(window);
+        self.window = Some(window.clone());
+
         // Create initial tab if URL provided
-        if let Some(ref url) = self.initial_url {
+        let initial_url = self.initial_url.clone();
+        if let Some(url) = initial_url {
             debug!("Creating initial tab with URL: {}", url);
-            self.create_tab(url)?;
+            self.create_tab(&url)?;
             debug!("Initial tab created successfully");
+        } else {
+            // Create a default blank tab
+            self.create_tab("about:blank")?;
+            debug!("Created default blank tab");
         }
 
-        let browser = Arc::new(Mutex::new(self));
+        let browser = Arc::new(Mutex::new(self.clone()));
         
         debug!("Starting event loop");
         
-        event_loop.run(move |event, window_target, control_flow| {
+        event_loop.run(move |event, _window_target, control_flow| {
             *control_flow = ControlFlow::Wait;
 
             // Handle tab commands
             if let Ok(cmd) = cmd_rx.try_recv() {
-                let browser = browser.clone();
                 if let Ok(mut browser) = browser.lock() {
                     match cmd {
                         TabCommand::Create { url } => {
@@ -316,7 +329,6 @@ impl BrowserEngine {
 
             match event {
                 Event::WindowEvent { event, .. } => {
-                    let browser = browser.clone();
                     if let Ok(mut browser) = browser.lock() {
                         if let Err(e) = browser.handle_window_event(&event, &window) {
                             error!("Error handling window event: {}", e);
@@ -328,6 +340,9 @@ impl BrowserEngine {
                         }
                     }
                 }
+                Event::MainEventsCleared => {
+                    window.request_redraw();
+                }
                 _ => (),
             }
         })
@@ -337,16 +352,16 @@ impl BrowserEngine {
         // Create the tab in the manager
         let id = if let Ok(mut tabs) = self.tabs.lock() {
             let id = tabs.create_tab(url.to_string());
-            
+
             // Update the tab bar
             if let Some(ref tab_bar) = self.tab_bar {
                 tab_bar.update_tab_url(id, url);
             }
-            
+
             // Publish tab created event
-            self.publish_event(BrowserEvent::TabCreated { 
+            self.publish_event(BrowserEvent::TabCreated {
                 id,
-                url: url.to_string() 
+                url: url.to_string()
             })?;
 
             // If this is the first tab, make it active
@@ -379,7 +394,7 @@ impl BrowserEngine {
             if tabs.switch_to_tab(id) {
                 // Update WebView content and tab bar
                 self.update_tab_visibility()?;
-                
+
                 // Publish tab activated event
                 self.publish_event(BrowserEvent::TabActivated { id })?;
                 Ok(())
@@ -454,9 +469,9 @@ impl BrowserEngine {
             BrowserCommand::CreateTab { url } => {
                 if let Ok(mut tabs) = self.tabs.lock() {
                     let id = tabs.create_tab(url.clone());
-                    self.publish_event(BrowserEvent::TabCreated { 
+                    self.publish_event(BrowserEvent::TabCreated {
                         id,
-                        url: url.clone() 
+                        url: url.clone()
                     })?;
                     Ok(())
                 } else {
@@ -582,7 +597,7 @@ impl BrowserEngine {
         if let Ok(mut tabs) = self.tabs.lock() {
             if let Some(tab) = tabs.get_tab_mut(id) {
                 tab.url = url.to_string();
-                
+
                 // If this is the active tab, update the WebView
                 if tabs.is_active_tab(id) {
                     if let Some(view) = &self.content_view {
@@ -591,13 +606,13 @@ impl BrowserEngine {
                         }
                     }
                 }
-                
+
                 // Publish URL changed event
                 self.publish_event(BrowserEvent::TabUrlChanged {
                     id,
                     url: url.to_string(),
                 })?;
-                
+
                 Ok(())
             } else {
                 Err(format!("Tab {} not found", id))
@@ -616,7 +631,7 @@ impl BrowserEngine {
                         view.load_url(&active_tab.url);
                     }
                 }
-                
+
                 // Update tab bar
                 if let Some(ref tab_bar) = self.tab_bar {
                     tab_bar.update_tab_url(active_tab.id, &active_tab.url);
@@ -674,74 +689,56 @@ impl BrowserEngine {
         match event {
             WindowEvent::Resized(size) => {
                 debug!("Handling window resize: {:?}", size);
-                // Update both tab bar and content view bounds
-                let tab_height: u32 = 40;
-                
-                // Update tab bar bounds
-                if let Some(ref tab_bar) = self.tab_bar {
-                    tab_bar.update_bounds(window);
-                }
-
-                // Update content view bounds
-                if let Some(ref content_view) = self.content_view {
-                    if let Ok(view) = content_view.lock() {
-                        view.set_bounds(wry::Rect {
-                            x: 0_i32,
-                            y: tab_height as i32,
-                            width: size.width,
-                            height: size.height.saturating_sub(tab_height),
-                        });
-                    }
-                }
+                self.update_webview_bounds(window);
                 Ok(())
             }
-            WindowEvent::KeyboardInput { 
-                device_id: _,
-                event,
-                is_synthetic: _,
-            } => {
-                debug!("Handling keyboard input: {:?}", event);
-                if let Some(physical_key) = event.physical_key {
-                    use tao::keyboard::Key;
-                    match physical_key {
-                        Key::Character("t") if event.modifiers.control_key() => {
-                            // Create new tab
-                            if let Err(e) = self.create_tab("about:blank") {
-                                error!("Failed to create tab: {}", e);
-                            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                use tao::keyboard::Key;
+                
+                let is_pressed = matches!(event.state, ElementState::Pressed);
+                
+                if is_pressed && !event.repeat {
+                    match &event.logical_key {
+                        Key::Character(c) if *c == String::from("t") => {
+                            debug!("Ctrl+T pressed, creating new tab");
+                            self.create_tab("about:blank")
+                                .map(|_| ())
                         }
-                        Key::Character("w") if event.modifiers.control_key() => {
-                            // Close current tab
-                            if let Ok(tabs) = self.tabs.lock() {
-                                if let Some(active_tab) = tabs.get_active_tab() {
-                                    let id = active_tab.id;
-                                    drop(tabs); // Release lock before closing tab
-                                    if let Err(e) = self.close_tab(id) {
-                                        error!("Failed to close tab: {}", e);
-                                    }
-                                }
-                            }
+                        Key::Character(c) if *c == String::from("w") => {
+                            debug!("Ctrl+W pressed, closing current tab");
+                            // Get the active tab ID before locking for close
+                            let active_tab_id = {
+                                let tabs = self.tabs.lock()
+                                    .map_err(|_| "Failed to lock tabs".to_string())?;
+                                tabs.get_active_tab()
+                                    .map(|tab| tab.id)
+                                    .ok_or_else(|| "No active tab".to_string())?
+                            };
+                            self.close_tab(active_tab_id)
                         }
-                        Key::Tab if event.modifiers.control_key() => {
-                            // Switch to next tab
-                            if let Ok(tabs) = self.tabs.lock() {
-                                let current_id = tabs.get_active_tab().map(|t| t.id).unwrap_or(0);
+                        Key::Tab => {
+                            debug!("Ctrl+Tab pressed, switching tab");
+                            // Get the next tab ID before locking for switch
+                            let next_tab_id = {
+                                let tabs = self.tabs.lock()
+                                    .map_err(|_| "Failed to lock tabs".to_string())?;
+                                let active_tab = tabs.get_active_tab()
+                                    .ok_or_else(|| "No active tab".to_string())?;
+                                let current_id = active_tab.id;
                                 let all_tabs = tabs.get_all_tabs();
-                                if let Some(next_tab) = all_tabs.iter()
+                                all_tabs.iter()
                                     .find(|t| t.id > current_id)
-                                    .or_else(|| all_tabs.first()) {
-                                    let id = next_tab.id;
-                                    drop(tabs); // Release lock before switching
-                                    if let Err(e) = self.switch_to_tab(id) {
-                                        error!("Failed to switch tab: {}", e);
-                                    }
-                                }
-                            }
+                                    .or_else(|| all_tabs.first())
+                                    .map(|tab| tab.id)
+                                    .ok_or_else(|| "No tab to switch to".to_string())?
+                            };
+                            self.switch_to_tab(next_tab_id)
                         }
-                        _ => {}
+                        _ => Ok(())
                     }
+                } else {
+                    Ok(())
                 }
-                Ok(())
             }
             WindowEvent::CloseRequested => {
                 debug!("Window close requested");
