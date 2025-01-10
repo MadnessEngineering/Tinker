@@ -289,7 +289,10 @@ impl BrowserEngine {
             .with_transparent(false)
             .with_maximized(false)
             .build(&event_loop)
-            .map_err(|e| WebViewError::WindowError(e.to_string()))?;
+            .map_err(|e| {
+                error!("Failed to create window: {}", e);
+                WebViewError::WindowError(e.to_string())
+            })?;
 
         debug!("Window properties - size: {:?}, position: {:?}, visible: {}",
             window.inner_size(),
@@ -297,14 +300,19 @@ impl BrowserEngine {
             window.is_visible()
         );
 
-        // Ensure window is visible and store it
-        window.set_visible(true);
-        self.window = Some(Arc::new(window.clone()));
-        debug!("Window created successfully");
+        // Create command channel for tab bar
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        debug!("Created command channel for tab bar");
 
-        // Create the tab bar
+        // Create content view before tab bar
+        debug!("Creating content view");
+        let webview = self.create_content_view(&window)?;
+        self.content_view = Some(Arc::new(Mutex::new(webview)));
+        debug!("Content view created and stored in Arc<Mutex>");
+
+        // Create tab bar if not in headless mode
         if !self.headless {
-            let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+            debug!("Creating tab bar");
             match TabBar::new(&window, cmd_tx) {
                 Ok(tab_bar) => {
                     self.tab_bar = Some(tab_bar);
@@ -317,49 +325,71 @@ impl BrowserEngine {
             }
         }
 
-        // Create the content view
-        let webview = self.create_content_view(&window)?;
-        self.content_view = Some(Arc::new(Mutex::new(webview)));
-        debug!("Content view created and stored successfully");
+        // Store window reference
+        let window = Arc::new(window);
+        self.window = Some(window.clone());
+        debug!("Window reference stored in Arc");
 
         // Create initial tab if URL provided
         if let Some(url) = &self.initial_url {
+            debug!("Creating initial tab with URL: {}", url);
             self.create_tab(url)?;
+        } else {
+            debug!("Creating default blank tab");
+            self.create_tab("about:blank")?;
         }
+
+        let browser = Arc::new(Mutex::new(self.clone()));
+        debug!("Created browser Arc<Mutex>");
 
         debug!("Starting event loop");
         window.request_redraw();
-        
-        event_loop.run(move |event, _, control_flow| {
-            *control_flow = if self.running {
-                ControlFlow::Poll
-            } else {
-                ControlFlow::Exit
-            };
+        debug!("Initial redraw requested");
 
-            // Handle window events
-            if let Err(e) = self.handle_event(event.clone()) {
-                error!("Error handling event: {}", e);
-                *control_flow = ControlFlow::Exit;
-                return;
-            }
+        event_loop.run(move |event, window_target, control_flow| {
+            *control_flow = ControlFlow::Wait;
 
-            // Handle browser commands
-            if let Some(events) = &self.events {
-                if let Ok(events) = events.lock() {
-                    while let Ok(cmd) = events.try_recv() {
-                        if let Err(e) = self.handle_command(cmd) {
-                            error!("Error handling command: {}", e);
+            match event {
+                Event::WindowEvent { event, .. } => {
+                    debug!("Window event received: {:?}", event);
+                    if let Ok(mut browser) = browser.lock() {
+                        if let Err(e) = browser.handle_window_event(&event, &window) {
+                            error!("Error handling window event: {}", e);
+                        }
+
+                        if let WindowEvent::CloseRequested = event {
+                            debug!("Window close requested, exiting");
                             *control_flow = ControlFlow::Exit;
-                            return;
+                        }
+                    } else {
+                        error!("Failed to lock browser in event loop");
+                    }
+                }
+                Event::MainEventsCleared => {
+                    debug!("Main events cleared");
+                    window.request_redraw();
+                }
+                Event::RedrawRequested(_) => {
+                    debug!("Redraw requested");
+                    if let Ok(browser) = browser.lock() {
+                        if let Some(window) = &browser.window {
+                            debug!("Window state - size: {:?}, visible: {}",
+                                window.inner_size(),
+                                window.is_visible()
+                            );
                         }
                     }
                 }
-            }
-
-            // Request redraw after events are processed
-            if matches!(event, Event::MainEventsCleared) {
-                window.request_redraw();
+                Event::NewEvents(start_cause) => {
+                    debug!("New events started: {:?}", start_cause);
+                }
+                Event::Resumed => {
+                    debug!("Window resumed");
+                    window.request_redraw();
+                }
+                _ => {
+                    debug!("Other event: {:?}", event);
+                },
             }
         });
 
