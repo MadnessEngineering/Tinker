@@ -7,112 +7,87 @@
             padding: 0;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background-color: #f0f0f0;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 40px;
-            z-index: 1000;
-            pointer-events: auto;
             user-select: none;
-            -webkit-user-select: none;
-            display: block !important;
-            visibility: visible !important;
         }
-
+        
         #tab-bar {
             display: flex;
-            align-items: center;
-            height: 100%;
+            height: 40px;
             background-color: #f0f0f0;
             border-bottom: 1px solid #ccc;
-            padding: 0 8px;
-            box-sizing: border-box;
-            position: relative;
-            z-index: 1000;
-            visibility: visible !important;
+            overflow-x: auto;
+            overflow-y: hidden;
+            white-space: nowrap;
         }
-
+        
         .tab {
             display: flex;
             align-items: center;
-            height: 32px;
             min-width: 100px;
             max-width: 200px;
-            margin-right: 4px;
-            padding: 0 8px;
-            background-color: #e0e0e0;
+            height: 36px;
+            margin: 2px 2px 0 2px;
+            padding: 0 10px;
+            background-color: #fff;
             border: 1px solid #ccc;
             border-radius: 4px 4px 0 0;
             cursor: pointer;
-            transition: background-color 0.2s;
-            position: relative;
-            z-index: 1;
         }
-
+        
         .tab.active {
-            background-color: #ffffff;
-            border-bottom-color: #ffffff;
+            background-color: #fff;
+            border-bottom: none;
         }
-
-        .tab:hover {
-            background-color: #f8f8f8;
-        }
-
+        
         .tab-title {
             flex: 1;
-            white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            margin-right: 8px;
-            font-size: 12px;
-            color: #333;
+            white-space: nowrap;
+            font-size: 13px;
         }
-
+        
         .tab-close {
+            margin-left: 8px;
             width: 16px;
             height: 16px;
+            border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            border-radius: 50%;
-            background-color: transparent;
-            transition: background-color 0.2s;
             font-size: 14px;
-            line-height: 1;
             color: #666;
         }
-
+        
         .tab-close:hover {
-            background-color: rgba(0, 0, 0, 0.1);
+            background-color: #e0e0e0;
             color: #333;
         }
-
-        #new-tab {
+        
+        #new-tab-button {
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 28px;
-            height: 28px;
-            margin-left: 4px;
+            width: 32px;
+            height: 36px;
+            margin: 2px;
             background-color: transparent;
             border: none;
-            border-radius: 4px;
             cursor: pointer;
-            transition: background-color 0.2s;
             font-size: 20px;
             color: #666;
         }
-
-        #new-tab:hover {
-            background-color: rgba(0, 0, 0, 0.1);
-            color: #333;
+        
+        #new-tab-button:hover {
+            background-color: #e0e0e0;
+            border-radius: 4px;
         }
     </style>
 </head>
 <body>
     <div id="tab-bar">
-        <button id="new-tab" title="New Tab">+</button>
+        <button id="new-tab-button">+</button>
     </div>
+    <script src="tab_bar.js"></script>
 </body>
 </html> 

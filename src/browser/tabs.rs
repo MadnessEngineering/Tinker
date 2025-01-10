@@ -132,6 +132,10 @@ impl TabManager {
     pub fn get_tab_mut(&mut self, id: usize) -> Option<&mut Tab> {
         self.tabs.get_mut(&id)
     }
+
+    pub fn is_active_tab(&self, id: usize) -> bool {
+        Some(id) == self.active_tab
+    }
 }
 
 #[cfg(test)]
