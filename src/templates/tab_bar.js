@@ -1,86 +1,111 @@
-// Store tab data
-const tabs = new Map();
-let activeTabId = null;
+window.tabs = new Map();
 
-function createTabElement(id, title, url) {
+// IPC setup
+window.ipc = {
+    postMessage: (msg) => window.ipc.external.invoke(JSON.stringify(msg)),
+    handleMessage: (msg) =>
+    {
+        console.log('Message from Rust:', msg);
+        try
+        {
+            const data = JSON.parse(msg);
+            switch (data.type)
+            {
+                case 'updateUrl':
+                    updateTabUrl(data.id, data.url);
+                    break;
+                case 'updateTitle':
+                    updateTabTitle(data.id, data.title);
+                    break;
+                default:
+                    console.warn('Unknown message type:', data.type);
+            }
+        } catch (e)
+        {
+            console.error('Failed to parse message:', e);
+        }
+    }
+};
+
+// Tab management functions
+function createTab(id, url = 'about:blank', title = 'New Tab')
+{
     const tab = document.createElement('div');
     tab.className = 'tab';
-    tab.setAttribute('data-tab-id', id);
-    tab.setAttribute('data-url', url);
+    tab.dataset.tabId = id;
+    tab.dataset.url = url;
 
     const titleSpan = document.createElement('span');
     titleSpan.className = 'tab-title';
     titleSpan.textContent = title;
-    tab.appendChild(titleSpan);
 
-    const closeButton = document.createElement('div');
+    const closeButton = document.createElement('span');
     closeButton.className = 'tab-close';
-    closeButton.innerHTML = '×';
+    closeButton.textContent = '×';
     closeButton.onclick = (e) =>
     {
         e.stopPropagation();
-        window.ipc.postMessage(JSON.stringify({
-            type: 'close',
+        window.ipc.postMessage({
+            type: 'close_tab',
             id: parseInt(id)
-        }));
+        });
     };
+
+    tab.appendChild(titleSpan);
     tab.appendChild(closeButton);
 
     tab.onclick = () =>
     {
-        window.ipc.postMessage(JSON.stringify({
-            type: 'switch',
+        window.ipc.postMessage({
+            type: 'switch_tab',
             id: parseInt(id)
-        }));
+        });
     };
+
+    const newTabButton = document.getElementById('new-tab-button');
+    document.getElementById('tab-bar').insertBefore(tab, newTabButton);
+    window.tabs.set(id, tab);
 
     return tab;
 }
 
-function addTab(id, title, url)
+function updateTabUrl(id, url)
 {
-    const tabBar = document.getElementById('tab-bar');
-    const newTabButton = document.getElementById('new-tab');
-    const tab = createTabElement(id, title, url);
-    tabBar.insertBefore(tab, newTabButton);
-    setActiveTab(id);
-}
-
-function updateTab(id, title, url) {
-    const tab = document.querySelector(`.tab[data-id="${id}"]`);
+    const tab = window.tabs.get(id);
     if (tab) {
-        const titleElement = tab.querySelector('.tab-title');
-        titleElement.textContent = title;
-        titleElement.title = url;
-        tabs.set(id, { title, url });
+        tab.dataset.url = url;
     }
 }
 
-function removeTab(id) {
-    const tab = document.querySelector(`[data-tab-id="${id}"]`);
+function updateTabTitle(id, title)
+{
+    const tab = window.tabs.get(id);
     if (tab) {
-        tab.remove();
+        const titleSpan = tab.querySelector('.tab-title');
+        if (titleSpan)
+        {
+            titleSpan.textContent = title;
+        }
     }
 }
 
 function setActiveTab(id) {
-    const tabs = document.querySelectorAll('.tab');
-    tabs.forEach(tab =>
+    window.tabs.forEach((tab) =>
     {
-        if (tab.getAttribute('data-tab-id') === id.toString())
-        {
-            tab.classList.add('active');
-        } else
-        {
-            tab.classList.remove('active');
-        }
+        tab.classList.remove('active');
     });
+    const tab = window.tabs.get(id);
+    if (tab)
+    {
+        tab.classList.add('active');
+    }
 }
 
-document.getElementById('new-tab').onclick = () =>
+// Event listeners
+document.getElementById('new-tab-button').onclick = () =>
 {
-    window.ipc.postMessage(JSON.stringify({
-        type: 'create',
+    window.ipc.postMessage({
+        type: 'create_tab',
         url: 'about:blank'
-    }));
+    });
 };

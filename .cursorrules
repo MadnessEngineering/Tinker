@@ -1,5 +1,5 @@
 0. Use trunk-based development with feature branches
-1. Work on the code problem asked, implementing it
+1. Work on the code problem asked, implementing it without harming existing methods, Ask if unsure.
 2. Run available tests (e.g. 'cargo test') and iterate until successful
 3. Maintain a "Lessons Learned" section in readme.md
 4. Update readme.md with progress after completing features

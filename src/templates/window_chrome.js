@@ -1,7 +1,6 @@
-// Window control functionality
+// IPC setup
 window.ipc = {
     postMessage: (msg) => window.ipc.external.invoke(JSON.stringify(msg)),
-
     handleMessage: (msg) =>
     {
         console.log('Message from Rust:', msg);
@@ -11,7 +10,7 @@ window.ipc = {
             switch (data.type)
             {
                 case 'navigate':
-                    window.location.href = data.url;
+                    navigateToUrl(data.url);
                     break;
                 case 'updateTitle':
                     document.title = data.title;
@@ -26,63 +25,49 @@ window.ipc = {
     }
 };
 
-// Window control functions
-function minimizeWindow()
+// Navigation functions
+function navigateToUrl(url)
 {
-    window.ipc.postMessage(JSON.stringify({
-        type: 'WindowControl',
-        action: 'minimize'
-    }));
-}
+    const urlInput = document.getElementById('url-input');
+    urlInput.value = url;
 
-function maximizeWindow()
-{
-    window.ipc.postMessage(JSON.stringify({
-        type: 'WindowControl',
-        action: 'maximize'
-    }));
-}
-
-function closeWindow()
-{
-    window.ipc.postMessage(JSON.stringify({
-        type: 'WindowControl',
-        action: 'close'
-    }));
-}
-
-// Monitor page events
-document.addEventListener('DOMContentLoaded', () =>
-{
-    // Send page load event
     window.ipc.postMessage({
-        type: 'pageLoaded',
-        url: window.location.href
+        type: 'navigate',
+        url: url
     });
+}
 
-    // Monitor title changes
-    const observer = new MutationObserver(() =>
+// Event listeners
+document.getElementById('url-input').addEventListener('keypress', (e) =>
+{
+    if (e.key === 'Enter')
     {
-        window.ipc.postMessage({
-            type: 'titleChanged',
-            title: document.title
-        });
-    });
-
-    if (document.querySelector('title'))
-    {
-        observer.observe(
-            document.querySelector('title'),
-            { childList: true, characterData: true, subtree: true }
-        );
+        let url = e.target.value.trim();
+        if (!url.startsWith('http://') && !url.startsWith('https://'))
+        {
+            url = 'https://' + url;
+        }
+        navigateToUrl(url);
     }
 });
 
-// Handle navigation events
-window.addEventListener('popstate', () =>
+document.getElementById('back-button').addEventListener('click', () =>
 {
     window.ipc.postMessage({
-        type: 'navigation',
-        url: window.location.href
+        type: 'navigate_back'
+    });
+});
+
+document.getElementById('forward-button').addEventListener('click', () =>
+{
+    window.ipc.postMessage({
+        type: 'navigate_forward'
+    });
+});
+
+document.getElementById('reload-button').addEventListener('click', () =>
+{
+    window.ipc.postMessage({
+        type: 'reload'
     });
 }); 

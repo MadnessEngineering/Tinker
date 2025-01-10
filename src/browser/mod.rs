@@ -1,7 +1,7 @@
 //! Browser engine implementation
 
 use std::{
-    sync::{Arc, Mutex, mpsc::channel},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tao::{
@@ -9,7 +9,6 @@ use tao::{
     event_loop::{ControlFlow, EventLoop},
     window::{WindowBuilder, Window},
     dpi::LogicalSize,
-    keyboard::ModifiersState,
 };
 use wry::{WebView, WebViewBuilder};
 use tracing::{debug, info, error};
@@ -685,6 +684,12 @@ impl BrowserEngine {
         }
     }
 
+    /// Handle keyboard and window events with proper error handling and state management.
+    /// 
+    /// # Supported keyboard shortcuts:
+    /// - Ctrl+T: Create new tab
+    /// - Ctrl+W: Close current tab
+    /// - Ctrl+Tab: Switch to next tab
     fn handle_window_event(&mut self, event: &WindowEvent, window: &Window) -> Result<(), String> {
         match event {
             WindowEvent::Resized(size) => {
@@ -695,36 +700,66 @@ impl BrowserEngine {
             WindowEvent::KeyboardInput { event, .. } => {
                 use tao::keyboard::Key;
                 
-                let is_pressed = matches!(event.state, ElementState::Pressed);
+                // Early return if not a key press or is a repeat
+                if !matches!(event.state, ElementState::Pressed) || event.repeat {
+                    return Ok(());
+                }
+
+                // Check if Control key is held
+                let is_ctrl = matches!(event.state, ElementState::Pressed);
                 
-                if is_pressed && !event.repeat {
+                if is_ctrl {
                     match &event.logical_key {
                         Key::Character(c) if *c == String::from("t") => {
                             debug!("Ctrl+T pressed, creating new tab");
-                            self.create_tab("about:blank")
-                                .map(|_| ())
+                            // Create new tab and provide user feedback
+                            match self.create_tab("about:blank") {
+                                Ok(_) => {
+                                    debug!("New tab created successfully");
+                                    Ok(())
+                                }
+                                Err(e) => {
+                                    error!("Failed to create new tab: {}", e);
+                                    Err(format!("Failed to create new tab: {}", e))
+                                }
+                            }
                         }
                         Key::Character(c) if *c == String::from("w") => {
                             debug!("Ctrl+W pressed, closing current tab");
-                            // Get the active tab ID before locking for close
+                            // Get active tab ID in a separate scope to release lock quickly
                             let active_tab_id = {
                                 let tabs = self.tabs.lock()
                                     .map_err(|_| "Failed to lock tabs".to_string())?;
                                 tabs.get_active_tab()
                                     .map(|tab| tab.id)
-                                    .ok_or_else(|| "No active tab".to_string())?
+                                    .ok_or_else(|| "No active tab to close".to_string())?
                             };
-                            self.close_tab(active_tab_id)
+
+                            // Close tab and provide user feedback
+                            match self.close_tab(active_tab_id) {
+                                Ok(_) => {
+                                    debug!("Tab closed successfully");
+                                    Ok(())
+                                }
+                                Err(e) => {
+                                    error!("Failed to close tab: {}", e);
+                                    Err(format!("Failed to close tab: {}", e))
+                                }
+                            }
                         }
                         Key::Tab => {
                             debug!("Ctrl+Tab pressed, switching tab");
-                            // Get the next tab ID before locking for switch
+                            // Get next tab ID in a separate scope to release lock quickly
                             let next_tab_id = {
                                 let tabs = self.tabs.lock()
                                     .map_err(|_| "Failed to lock tabs".to_string())?;
+                                
+                                // Get current active tab
                                 let active_tab = tabs.get_active_tab()
                                     .ok_or_else(|| "No active tab".to_string())?;
                                 let current_id = active_tab.id;
+                                
+                                // Find next tab ID
                                 let all_tabs = tabs.get_all_tabs();
                                 all_tabs.iter()
                                     .find(|t| t.id > current_id)
@@ -732,7 +767,18 @@ impl BrowserEngine {
                                     .map(|tab| tab.id)
                                     .ok_or_else(|| "No tab to switch to".to_string())?
                             };
-                            self.switch_to_tab(next_tab_id)
+
+                            // Switch tab and provide user feedback
+                            match self.switch_to_tab(next_tab_id) {
+                                Ok(_) => {
+                                    debug!("Tab switch successful");
+                                    Ok(())
+                                }
+                                Err(e) => {
+                                    error!("Failed to switch tab: {}", e);
+                                    Err(format!("Failed to switch tab: {}", e))
+                                }
+                            }
                         }
                         _ => Ok(())
                     }
