@@ -10,8 +10,15 @@ use tao::{
     window::{WindowBuilder, Window},
     dpi::LogicalSize,
 };
-use wry::{WebView, WebViewBuilder};
-use tracing::{debug, info, error};
+use wry::WebView;
+use log::{debug, error, info};
+use anyhow::{Result, anyhow};
+
+use crate::platform::{Platform, PlatformWebView};
+#[cfg(target_os = "windows")]
+use crate::platform::WindowsWebView;
+#[cfg(target_os = "macos")]
+use crate::platform::MacOSWebView;
 
 mod tabs;
 mod event_viewer;
@@ -29,31 +36,46 @@ use self::{
 use crate::event::{BrowserEvent, EventSystem, BrowserCommand};
 
 pub struct BrowserEngine {
-    pub headless: bool,
-    pub events: Option<Arc<Mutex<EventSystem>>>,
-    pub player: Arc<Mutex<EventPlayer>>,
-    pub recorder: Arc<Mutex<EventRecorder>>,
-    pub event_viewer: Arc<Mutex<EventViewer>>,
-    pub tabs: Arc<Mutex<TabManager>>,
-    pub tab_bar: Option<TabBar>,
-    pub content_view: Option<Arc<Mutex<WebView>>>,
-    pub window: Option<Arc<Window>>,
-    pub initial_url: Option<String>,
+    platform: Platform,
+    headless: bool,
+    events: Option<Arc<Mutex<EventSystem>>>,
+    player: Arc<Mutex<EventPlayer>>,
+    recorder: Arc<Mutex<EventRecorder>>,
+    event_viewer: Arc<Mutex<EventViewer>>,
+    tabs: Arc<Mutex<TabManager>>,
+    tab_bar: Option<TabBar>,
+    content_view: Option<Arc<Mutex<WebView>>>,
+    window: Option<Arc<Window>>,
+    initial_url: Option<String>,
 }
 
 impl BrowserEngine {
-    pub fn new(headless: bool, events: Option<Arc<Mutex<EventSystem>>>, initial_url: Option<String>) -> Self {
-        if let Some(ref events) = events {
-            if let Ok(_events) = events.lock() {
-                info!("Browser engine initialized with event system");
-            } else {
-                error!("Failed to lock event system during initialization");
-            }
-        } else {
-            debug!("Browser engine initialized without event system");
-        }
+    pub fn new(headless: bool, events: Option<Arc<Mutex<EventSystem>>>, initial_url: Option<String>) -> Result<Self> {
+        debug!("Starting browser engine");
+        
+        let platform = Platform::current();
+        let window = WindowBuilder::new()
+            .with_title("Browser")
+            .with_inner_size(LogicalSize::new(800, 600))
+            .build()
+            .map_err(|e| anyhow!("Failed to create window: {}", e))?;
 
-        BrowserEngine {
+        debug!("Created main window");
+
+        // Create platform-specific WebView
+        let webview = match platform {
+            Platform::Windows => {
+                WindowsWebView::new(&window)?.webview
+            }
+            Platform::MacOS => {
+                MacOSWebView::new(&window)?.webview
+            }
+        };
+
+        debug!("Content view created successfully");
+
+        Ok(Self {
+            platform,
             headless,
             events,
             player: Arc::new(Mutex::new(EventPlayer::default())),
@@ -61,10 +83,10 @@ impl BrowserEngine {
             event_viewer: Arc::new(Mutex::new(EventViewer::default())),
             tabs: Arc::new(Mutex::new(TabManager::default())),
             tab_bar: None,
-            content_view: None,
-            window: None,
+            content_view: Some(Arc::new(Mutex::new(webview))),
+            window: Some(Arc::new(window)),
             initial_url,
-        }
+        })
     }
 
     fn publish_event(&self, event: BrowserEvent) -> Result<(), String> {
@@ -776,6 +798,7 @@ impl BrowserEngine {
 impl Clone for BrowserEngine {
     fn clone(&self) -> Self {
         BrowserEngine {
+            platform: self.platform,
             headless: self.headless,
             events: self.events.clone(),
             player: self.player.clone(),

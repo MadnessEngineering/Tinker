@@ -1,0 +1,15 @@
+/* Platform-specific styles */
+.platform-mac .tab {
+    border-radius: 6px 6px 0 0;
+    background: var(--mac-background);
+}
+
+.platform-mac .window-chrome {
+    -webkit-app-region: drag;
+}
+
+/* Windows-specific styles */
+.platform-windows .tab {
+    border-radius: 0;
+    background: var(--windows-background);
+} 

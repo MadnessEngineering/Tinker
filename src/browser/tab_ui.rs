@@ -3,6 +3,7 @@ use std::sync::mpsc::Sender;
 use wry::{WebView, WebViewBuilder};
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error};
+use anyhow::Result;
 
 #[derive(Clone)]
 pub struct TabBar {
@@ -104,4 +105,18 @@ pub enum TabCommand {
     Switch { id: usize },
     UpdateUrl { id: usize, url: String },
     UpdateTitle { id: usize, title: String },
+} 
+
+pub fn create_tab_bar(window: &impl raw_window_handle::HasWindowHandle) -> Result<WebView> {
+    let webview = WebViewBuilder::new(window)
+        .with_bounds(wry::Rect {
+            x: 0_i32,
+            y: 0_i32,
+            width: 800_u32,
+            height: 40_u32,
+        })
+        .with_html(include_str!("../templates/tab_bar.html"))
+        .build()?;
+
+    Ok(webview)
 } 

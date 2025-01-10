@@ -1,4 +1,62 @@
-window.tabs = new Map();
+class TabManager {
+    constructor() {
+        this.tabs = new Map();
+        this.activeTabId = null;
+        
+        // Platform-specific styling
+        this.isPlatformMac = navigator.platform.toLowerCase().includes('mac');
+        if (this.isPlatformMac) {
+            document.body.classList.add('platform-mac');
+        }
+    }
+
+    createTab(id, url = 'about:blank', title = 'New Tab') {
+        const tab = document.createElement('div');
+        tab.className = 'tab';
+        tab.dataset.tabId = id;
+        
+        // Platform-specific tab styling
+        if (this.isPlatformMac) {
+            tab.classList.add('mac-style-tab');
+        }
+
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'tab-title';
+        titleSpan.textContent = title;
+
+        const closeButton = document.createElement('span');
+        closeButton.className = 'tab-close';
+        closeButton.textContent = '×';
+        closeButton.onclick = (e) =>
+        {
+            e.stopPropagation();
+            window.ipc.postMessage({
+                type: 'close_tab',
+                id: parseInt(id)
+            });
+        };
+
+        tab.appendChild(titleSpan);
+        tab.appendChild(closeButton);
+
+        tab.onclick = () =>
+        {
+            window.ipc.postMessage({
+                type: 'switch_tab',
+                id: parseInt(id)
+            });
+        };
+
+        const newTabButton = document.getElementById('new-tab-button');
+        document.getElementById('tab-bar').insertBefore(tab, newTabButton);
+        this.tabs.set(id, tab);
+
+        return tab;
+    }
+}
+
+// Initialize tab manager
+window.tabManager = new TabManager();
 
 // IPC setup
 window.ipc = {
@@ -26,48 +84,6 @@ window.ipc = {
         }
     }
 };
-
-// Tab management functions
-function createTab(id, url = 'about:blank', title = 'New Tab')
-{
-    const tab = document.createElement('div');
-    tab.className = 'tab';
-    tab.dataset.tabId = id;
-    tab.dataset.url = url;
-
-    const titleSpan = document.createElement('span');
-    titleSpan.className = 'tab-title';
-    titleSpan.textContent = title;
-
-    const closeButton = document.createElement('span');
-    closeButton.className = 'tab-close';
-    closeButton.textContent = '×';
-    closeButton.onclick = (e) =>
-    {
-        e.stopPropagation();
-        window.ipc.postMessage({
-            type: 'close_tab',
-            id: parseInt(id)
-        });
-    };
-
-    tab.appendChild(titleSpan);
-    tab.appendChild(closeButton);
-
-    tab.onclick = () =>
-    {
-        window.ipc.postMessage({
-            type: 'switch_tab',
-            id: parseInt(id)
-        });
-    };
-
-    const newTabButton = document.getElementById('new-tab-button');
-    document.getElementById('tab-bar').insertBefore(tab, newTabButton);
-    window.tabs.set(id, tab);
-
-    return tab;
-}
 
 function updateTabUrl(id, url)
 {

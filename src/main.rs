@@ -1,15 +1,18 @@
 use clap::Parser;
-use tracing::{debug, error, info};
+use log::{debug, error, info, LevelFilter};
 use std::sync::{Arc, Mutex};
+use anyhow::Result;
 
 mod api;
 mod browser;
 mod event;
+mod platform;
 mod templates;
 
 use crate::{
     browser::BrowserEngine,
     event::EventSystem,
+    platform::Platform,
 };
 
 #[derive(Parser, Debug)]
@@ -51,8 +54,15 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
-    tracing_subscriber::fmt::init();
+    env_logger::Builder::new()
+        .filter_level(LevelFilter::Debug)
+        .init();
+
     info!("Starting Tinker Workshop...");
+    
+    // Detect platform
+    let platform = Platform::current();
+    info!("Running on {:?} platform", platform);
 
     // Parse command line arguments
     let args = Args::parse();
@@ -67,17 +77,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Create browser instance
+    // Create browser instance with platform-specific configuration
     let mut browser = BrowserEngine::new(
         args.headless,
         events.clone(),
-        args.url,
-    );
+        args.url.clone(),
+    )?;
 
     // Subscribe to relevant topics if events are enabled
     if let Some(ref events) = events {
         if let Ok(mut events) = events.lock() {
-            // Subscribe to all browser events using wildcard
             events.subscribe("browser/#")?;
             info!("Subscribed to all browser events");
         }
@@ -95,37 +104,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start replay if enabled
     if let Some(path) = args.replay {
-        if !std::path::Path::new(&path).exists() {
-            error!("Replay file not found: {}", path);
-            return Err("Replay file not found".into());
-        }
         browser.load_recording(&path)?;
         if let Some(speed) = args.replay_speed {
-            browser.set_replay_speed(speed);
+            browser.set_replay_speed(speed)?;
         }
-        browser.start_replay();
+        browser.start_replay()?;
         info!("Replaying events from {}", path);
     }
 
-    // Create initial tab
-    let tab_id = browser.create_tab("about:blank")?;
+    // Create initial tabs
+    info!("Creating initial tab");
+    browser.create_tab("about:blank")?;
 
-    // Create additional tabs if requested
     if let Some(num_tabs) = args.tabs {
-        info!("Creating {} tabs", num_tabs);
+        info!("Creating {} additional tabs", num_tabs - 1);
         for i in 1..num_tabs {
             browser.create_tab("about:blank")?;
-            info!("Created new tab {}", i);
+            info!("Created tab {}", i + 1);
         }
     }
 
-    // Load URL if provided
+    // Load initial URL if provided
     if let Some(url) = args.url {
+        info!("Navigating to initial URL: {}", url);
         browser.navigate(&url)?;
-        info!("Navigating to: {}", url);
     }
 
-    // Start event loop
+    // Start the browser
+    info!("Starting browser event loop");
     browser.run()?;
 
     Ok(())
