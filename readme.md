@@ -173,6 +173,16 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
 - 🔧 Fixed CLI tests with better version support and help text
 - 📝 Updated documentation with lessons learned about tab bar construction
 
+### January 9, 2024
+
+#### Code Organization and Error Handling
+- 🏗️ Moved BrowserCommand to event module to improve code structure
+- 🔒 Added thread-safe active tab checking with dedicated method
+- 🛡️ Improved error handling in WebView creation and management
+- 🧹 Cleaned up code organization and removed circular dependencies
+- 📝 Updated documentation with lessons learned about code structure
+- 🔧 Fixed template file organization with proper window chrome handling
+
 ## Lessons Learned
 
 ### AI Pair Programming
@@ -517,3 +527,25 @@ This workshop is licensed under the MIT License - see the [LICENSE](LICENSE) fil
   - Follow established event patterns
   - Share common metric collection
   - Standardize on MQTT for external interfaces
+
+### Code Organization
+- Avoid circular dependencies by keeping related types in the same module
+- Place commands and events together when they share common data structures
+- Use public helper methods to encapsulate common state checks
+- Keep template files in a dedicated directory with clear naming
+- Maintain clear separation between UI and business logic
+
+### Error Handling
+- Convert WebView errors to String for consistent error handling
+- Use map_err for error type conversion instead of custom match blocks
+- Release locks before performing operations that might need them
+- Handle all potential error cases in tab management
+- Provide clear error messages for debugging
+- Check lock acquisition success before using Mutex guards
+
+### Thread Safety
+- Use Arc<Mutex<T>> for shared state between threads
+- Release locks as soon as possible to prevent deadlocks
+- Clone command channels before moving into closures
+- Ensure proper lock cleanup in error cases
+- Use dedicated methods for checking state to avoid lock contention
