@@ -243,19 +243,26 @@ impl BrowserEngine {
     }
 
     pub fn run(&mut self) -> Result<(), String> {
-        debug!("Starting browser engine");
+        debug!("Starting browser engine run method");
 
         let event_loop = EventLoop::new();
+        debug!("Created event loop");
+
         let window = WindowBuilder::new()
             .with_title("Browser")
             .with_inner_size(LogicalSize::new(800, 600))
+            .with_visible(true)
+            .with_resizable(true)
+            .with_decorations(true)
+            .with_transparent(false)
             .build(&event_loop)
             .map_err(|e| format!("Failed to create window: {}", e))?;
 
-        debug!("Created main window");
+        debug!("Created main window with size: {:?}", window.inner_size());
 
         // Create command channel for tab bar
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        debug!("Created command channel");
 
         // Create content view
         self.create_content_view(&window)?;
@@ -271,6 +278,7 @@ impl BrowserEngine {
         // Store window reference
         let window = Arc::new(window);
         self.window = Some(window.clone());
+        debug!("Stored window reference");
 
         // Create initial tab if URL provided
         let initial_url = self.initial_url.clone();
@@ -280,54 +288,25 @@ impl BrowserEngine {
             debug!("Initial tab created successfully");
         } else {
             // Create a default blank tab
+            debug!("Creating default blank tab");
             self.create_tab("about:blank")?;
-            debug!("Created default blank tab");
+            debug!("Default blank tab created successfully");
         }
 
         let browser = Arc::new(Mutex::new(self.clone()));
+        debug!("Created browser Arc<Mutex>");
 
         debug!("Starting event loop");
+        window.request_redraw();
+        debug!("Redraw requested");
 
-        event_loop.run(move |event, _window_target, control_flow| {
+        event_loop.run(move |event, window_target, control_flow| {
             *control_flow = ControlFlow::Wait;
-
-            // Handle tab commands
-            if let Ok(cmd) = cmd_rx.try_recv() {
-                if let Ok(mut browser) = browser.lock() {
-                    match cmd {
-                        TabCommand::Create { url } => {
-                            if let Err(e) = browser.create_tab(&url) {
-                                error!("Failed to create tab: {}", e);
-                            }
-                        },
-                        TabCommand::Close { id } => {
-                            if let Err(e) = browser.close_tab(id) {
-                                error!("Failed to close tab: {}", e);
-                            }
-                        },
-                        TabCommand::Switch { id } => {
-                            if let Err(e) = browser.switch_to_tab(id) {
-                                error!("Failed to switch tab: {}", e);
-                            }
-                        },
-                        TabCommand::UpdateUrl { id, url } => {
-                            if let Err(e) = browser.update_tab_content(id, &url) {
-                                error!("Failed to update tab URL: {}", e);
-                            }
-                        },
-                        TabCommand::UpdateTitle { id, title } => {
-                            if let Ok(mut tabs) = browser.tabs.lock() {
-                                if let Some(tab) = tabs.get_tab_mut(id) {
-                                    tab.title = title;
-                                }
-                            }
-                        },
-                    }
-                }
-            }
+            debug!("Event loop iteration - event: {:?}", event);
 
             match event {
                 Event::WindowEvent { event, .. } => {
+                    debug!("Window event received: {:?}", event);
                     if let Ok(mut browser) = browser.lock() {
                         if let Err(e) = browser.handle_window_event(&event, &window) {
                             error!("Error handling window event: {}", e);
@@ -340,9 +319,22 @@ impl BrowserEngine {
                     }
                 }
                 Event::MainEventsCleared => {
+                    debug!("Main events cleared, requesting redraw");
                     window.request_redraw();
                 }
-                _ => (),
+                Event::RedrawRequested(_) => {
+                    debug!("Redraw requested");
+                }
+                Event::NewEvents(start_cause) => {
+                    debug!("New events started: {:?}", start_cause);
+                }
+                Event::Resumed => {
+                    debug!("Window resumed");
+                    window.request_redraw();
+                }
+                _ => {
+                    debug!("Other event: {:?}", event);
+                },
             }
         })
     }
@@ -644,22 +636,37 @@ impl BrowserEngine {
     }
 
     fn create_content_view(&mut self, window: &Window) -> Result<(), String> {
+        debug!("Creating content view for window");
         let tab_height: u32 = 40; // Match the tab bar height
+        
+        let window_size = window.inner_size();
+        debug!("Window size: {:?}", window_size);
+        
+        let webview_bounds = wry::Rect {
+            x: 0_i32,
+            y: tab_height as i32,
+            width: window_size.width,
+            height: window_size.height.saturating_sub(tab_height),
+        };
+        debug!("WebView bounds: {:?}", webview_bounds);
 
         let webview = WebViewBuilder::new(window)
-            .with_bounds(wry::Rect {
-                x: 0_i32,
-                y: tab_height as i32,
-                width: window.inner_size().width,
-                height: window.inner_size().height.saturating_sub(tab_height),
-            })
+            .with_bounds(webview_bounds)
             .with_initialization_script(include_str!("../templates/window_chrome.js"))
             .with_html(include_str!("../templates/window_chrome.html"))
-            .map_err(|e| e.to_string())?
+            .map_err(|e| {
+                error!("Failed to create WebView builder: {}", e);
+                e.to_string()
+            })?
             .build()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                error!("Failed to build WebView: {}", e);
+                e.to_string()
+            })?;
 
+        debug!("WebView created successfully");
         self.content_view = Some(Arc::new(Mutex::new(webview)));
+        debug!("Content view stored in Arc<Mutex>");
         Ok(())
     }
 

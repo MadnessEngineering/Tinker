@@ -14,6 +14,7 @@ use crate::{
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "A craftsperson's browser", long_about = None)]
+
 struct Args {
     /// URL to load
     #[arg(short, long)]
@@ -59,9 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize event system if broker URL is specified
     let events = if let Some(broker_url) = args.broker_url.as_ref() {
-        let mut events = EventSystem::new(broker_url, "tinker-browser");
-        events.connect()?;
-        info!("Connected to event broker at {}", broker_url);
+        let events = EventSystem::new(broker_url, "tinker-browser");
         Some(Arc::new(Mutex::new(events)))
     } else {
         None
@@ -74,12 +73,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.url.clone(),
     );
 
-    // Subscribe to relevant topics if events are enabled
+    // Create initial tab
+    let tab_id = browser.create_tab("about:blank")?;
+
+    // Create additional tabs if requested
+    if let Some(num_tabs) = args.tabs {
+        info!("Creating {} tabs", num_tabs);
+        for i in 1..num_tabs {
+            browser.create_tab("about:blank")?;
+            info!("Created new tab {}", i);
+        }
+    }
+
+    // Load URL if provided
+    if let Some(url) = args.url {
+        browser.navigate(&url)?;
+        info!("Navigating to: {}", url);
+    }
+
+    // Connect to event system after browser is initialized
     if let Some(ref events) = events {
         if let Ok(mut events) = events.lock() {
-            // Subscribe to all browser events using wildcard
-            events.subscribe("browser/#")?;
-            info!("Subscribed to all browser events");
+            if let Err(e) = events.connect() {
+                error!("Failed to connect to event broker: {}. Continuing without event system.", e);
+            } else {
+                // Subscribe to all browser events using wildcard
+                if let Err(e) = events.subscribe("browser/#") {
+                    error!("Failed to subscribe to events: {}. Continuing without event subscription.", e);
+                } else {
+                    info!("Connected to event broker and subscribed to events");
+                }
+            }
         }
     }
 
@@ -105,24 +129,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         browser.start_replay();
         info!("Replaying events from {}", path);
-    }
-
-    // Create initial tab
-    let tab_id = browser.create_tab("about:blank")?;
-
-    // Create additional tabs if requested
-    if let Some(num_tabs) = args.tabs {
-        info!("Creating {} tabs", num_tabs);
-        for i in 1..num_tabs {
-            browser.create_tab("about:blank")?;
-            info!("Created new tab {}", i);
-        }
-    }
-
-    // Load URL if provided
-    if let Some(url) = args.url {
-        browser.navigate(&url)?;
-        info!("Navigating to: {}", url);
     }
 
     // Start event loop
