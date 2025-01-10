@@ -71,7 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut browser = BrowserEngine::new(
         args.headless,
         events.clone(),
-        args.url,
+        args.url.clone(),
     );
 
     // Subscribe to relevant topics if events are enabled
