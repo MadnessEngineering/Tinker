@@ -13,6 +13,36 @@ use tao::{
 use wry::{WebView, WebViewBuilder};
 use tracing::{debug, info, error};
 
+#[derive(Debug, thiserror::Error)]
+pub enum WebViewError {
+    #[error("Failed to create WebView on Windows: {0}")]
+    WindowsError(String),
+
+    #[error("Failed to create WebView on macOS: {0}")]
+    MacOSError(String),
+
+    #[error("Failed to create WebView on Linux: {0}")]
+    LinuxError(String),
+
+    #[error("Failed to create WebView: {0}")]
+    InitError(#[from] wry::Error),
+
+    #[error("Failed to create window: {0}")]
+    WindowError(String),
+
+    #[error("Failed to create tab bar: {0}")]
+    TabBarError(String),
+
+    #[error("Failed to lock resource: {0}")]
+    LockError(String),
+
+    #[error("Tab operation failed: {0}")]
+    TabError(String),
+
+    #[error("Generic error: {0}")]
+    GenericError(String),
+}
+
 mod tabs;
 mod event_viewer;
 mod tab_ui;
@@ -39,6 +69,7 @@ pub struct BrowserEngine {
     pub content_view: Option<Arc<Mutex<WebView>>>,
     pub window: Option<Arc<Window>>,
     pub initial_url: Option<String>,
+    pub running: bool,
 }
 
 impl BrowserEngine {
@@ -64,6 +95,7 @@ impl BrowserEngine {
             content_view: None,
             window: None,
             initial_url,
+            running: true,
         }
     }
 
@@ -242,12 +274,12 @@ impl BrowserEngine {
         }
     }
 
-    pub fn run(&mut self) -> Result<(), String> {
-        debug!("Starting browser engine run method");
-
+    pub fn run(&mut self) -> Result<(), WebViewError> {
+        debug!("Starting browser engine");
         let event_loop = EventLoop::new();
-        debug!("Created event loop");
+        debug!("Created event loop: {:?}", event_loop);
 
+        debug!("Building window with WindowBuilder");
         let window = WindowBuilder::new()
             .with_title("Browser")
             .with_inner_size(LogicalSize::new(800, 600))
@@ -255,91 +287,86 @@ impl BrowserEngine {
             .with_resizable(true)
             .with_decorations(true)
             .with_transparent(false)
+            .with_maximized(false)
             .build(&event_loop)
-            .map_err(|e| format!("Failed to create window: {}", e))?;
+            .map_err(|e| WebViewError::WindowError(e.to_string()))?;
 
-        debug!("Created main window with size: {:?}", window.inner_size());
+        debug!("Window properties - size: {:?}, position: {:?}, visible: {}",
+            window.inner_size(),
+            window.outer_position().unwrap_or_default(),
+            window.is_visible()
+        );
 
-        // Create command channel for tab bar
-        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
-        debug!("Created command channel");
+        // Ensure window is visible and store it
+        window.set_visible(true);
+        self.window = Some(Arc::new(window.clone()));
+        debug!("Window created successfully");
 
-        // Create content view
-        self.create_content_view(&window)?;
-        debug!("Content view created successfully");
-
-        // Create tab bar if not in headless mode
+        // Create the tab bar
         if !self.headless {
-            debug!("Creating tab bar");
-            self.tab_bar = Some(TabBar::new(&window, cmd_tx).map_err(|e| format!("Failed to create tab bar: {}", e))?);
-            debug!("Tab bar created successfully");
+            let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+            match TabBar::new(&window, cmd_tx) {
+                Ok(tab_bar) => {
+                    self.tab_bar = Some(tab_bar);
+                    debug!("Tab bar created successfully");
+                }
+                Err(e) => {
+                    error!("Failed to create tab bar: {}", e);
+                    return Err(WebViewError::TabBarError(e.to_string()));
+                }
+            }
         }
 
-        // Store window reference
-        let window = Arc::new(window);
-        self.window = Some(window.clone());
-        debug!("Stored window reference");
+        // Create the content view
+        let webview = self.create_content_view(&window)?;
+        self.content_view = Some(Arc::new(Mutex::new(webview)));
+        debug!("Content view created and stored successfully");
 
         // Create initial tab if URL provided
-        let initial_url = self.initial_url.clone();
-        if let Some(url) = initial_url {
-            debug!("Creating initial tab with URL: {}", url);
-            self.create_tab(&url)?;
-            debug!("Initial tab created successfully");
-        } else {
-            // Create a default blank tab
-            debug!("Creating default blank tab");
-            self.create_tab("about:blank")?;
-            debug!("Default blank tab created successfully");
+        if let Some(url) = &self.initial_url {
+            self.create_tab(url)?;
         }
-
-        let browser = Arc::new(Mutex::new(self.clone()));
-        debug!("Created browser Arc<Mutex>");
 
         debug!("Starting event loop");
         window.request_redraw();
-        debug!("Redraw requested");
+        
+        event_loop.run(move |event, _, control_flow| {
+            *control_flow = if self.running {
+                ControlFlow::Poll
+            } else {
+                ControlFlow::Exit
+            };
 
-        event_loop.run(move |event, window_target, control_flow| {
-            *control_flow = ControlFlow::Wait;
-            debug!("Event loop iteration - event: {:?}", event);
+            // Handle window events
+            if let Err(e) = self.handle_event(event.clone()) {
+                error!("Error handling event: {}", e);
+                *control_flow = ControlFlow::Exit;
+                return;
+            }
 
-            match event {
-                Event::WindowEvent { event, .. } => {
-                    debug!("Window event received: {:?}", event);
-                    if let Ok(mut browser) = browser.lock() {
-                        if let Err(e) = browser.handle_window_event(&event, &window) {
-                            error!("Error handling window event: {}", e);
-                        }
-
-                        if let WindowEvent::CloseRequested = event {
-                            debug!("Window close requested, exiting");
+            // Handle browser commands
+            if let Some(events) = &self.events {
+                if let Ok(events) = events.lock() {
+                    while let Ok(cmd) = events.try_recv() {
+                        if let Err(e) = self.handle_command(cmd) {
+                            error!("Error handling command: {}", e);
                             *control_flow = ControlFlow::Exit;
+                            return;
                         }
                     }
                 }
-                Event::MainEventsCleared => {
-                    debug!("Main events cleared, requesting redraw");
-                    window.request_redraw();
-                }
-                Event::RedrawRequested(_) => {
-                    debug!("Redraw requested");
-                }
-                Event::NewEvents(start_cause) => {
-                    debug!("New events started: {:?}", start_cause);
-                }
-                Event::Resumed => {
-                    debug!("Window resumed");
-                    window.request_redraw();
-                }
-                _ => {
-                    debug!("Other event: {:?}", event);
-                },
             }
-        })
+
+            // Request redraw after events are processed
+            if matches!(event, Event::MainEventsCleared) {
+                window.request_redraw();
+            }
+        });
+
+        Ok(())
     }
 
-    pub fn create_tab(&mut self, url: &str) -> Result<usize, String> {
+    pub fn create_tab(&mut self, url: &str) -> Result<usize, WebViewError> {
         // Create the tab in the manager
         let id = if let Ok(mut tabs) = self.tabs.lock() {
             let id = tabs.create_tab(url.to_string());
@@ -353,33 +380,25 @@ impl BrowserEngine {
             self.publish_event(BrowserEvent::TabCreated {
                 id,
                 url: url.to_string()
-            })?;
+            }).map_err(|e| WebViewError::GenericError(e.to_string()))?;
 
             // If this is the first tab, make it active
             if tabs.get_all_tabs().len() == 1 {
                 tabs.switch_to_tab(id);
                 self.update_tab_visibility()?;
-                self.publish_event(BrowserEvent::TabActivated { id })?;
+                self.publish_event(BrowserEvent::TabActivated { id })
+                    .map_err(|e| WebViewError::GenericError(e.to_string()))?;
             }
 
             Ok(id)
         } else {
-            Err("Failed to lock tab manager".to_string())
+            Err(WebViewError::LockError("Failed to lock tab manager".to_string()))
         }?;
-
-        // Load the URL if this is the active tab
-        if let Ok(tabs) = self.tabs.lock() {
-            if let Some(_tab) = tabs.get_tab(id) {
-                if tabs.is_active_tab(id) {
-                    // Handle active tab
-                }
-            }
-        }
 
         Ok(id)
     }
 
-    pub fn switch_to_tab(&mut self, id: usize) -> Result<(), String> {
+    pub fn switch_to_tab(&mut self, id: usize) -> Result<(), WebViewError> {
         // First switch the tab in the manager
         if let Ok(mut tabs) = self.tabs.lock() {
             if tabs.switch_to_tab(id) {
@@ -387,20 +406,22 @@ impl BrowserEngine {
                 self.update_tab_visibility()?;
 
                 // Publish tab activated event
-                self.publish_event(BrowserEvent::TabActivated { id })?;
+                self.publish_event(BrowserEvent::TabActivated { id })
+                    .map_err(|e| WebViewError::GenericError(e.to_string()))?;
                 Ok(())
             } else {
-                Err(format!("Failed to switch to tab {}", id))
+                Err(WebViewError::TabError(format!("Failed to switch to tab {}", id)))
             }
         } else {
-            Err("Failed to lock tabs".to_string())
+            Err(WebViewError::LockError("Failed to lock tabs".to_string()))
         }
     }
 
-    pub fn close_tab(&mut self, id: usize) -> Result<(), String> {
+    pub fn close_tab(&mut self, id: usize) -> Result<(), WebViewError> {
         // Get the next active tab ID before closing
         let next_active_id = {
-            let tabs = self.tabs.lock().map_err(|_| "Failed to lock tabs".to_string())?;
+            let tabs = self.tabs.lock()
+                .map_err(|_| WebViewError::LockError("Failed to lock tabs".to_string()))?;
             if tabs.is_active_tab(id) {
                 tabs.get_all_tabs().iter()
                     .find(|t| t.id != id)
@@ -412,24 +433,19 @@ impl BrowserEngine {
 
         // Close the tab
         {
-            let mut tabs = self.tabs.lock().map_err(|_| "Failed to lock tabs".to_string())?;
+            let mut tabs = self.tabs.lock()
+                .map_err(|_| WebViewError::LockError("Failed to lock tabs".to_string()))?;
             if !tabs.close_tab(id) {
-                return Err("Tab not found".to_string());
+                return Err(WebViewError::TabError("Tab not found".to_string()));
             }
             // Publish tab closed event
-            self.publish_event(BrowserEvent::TabClosed { id })?;
+            self.publish_event(BrowserEvent::TabClosed { id })
+                .map_err(|e| WebViewError::GenericError(e.to_string()))?;
         }
 
-        // Switch to another tab if needed
+        // Switch to next tab if needed
         if let Some(next_id) = next_active_id {
             self.switch_to_tab(next_id)?;
-        } else {
-            // Create a new blank tab if this was the last one
-            let tabs = self.tabs.lock().map_err(|_| "Failed to lock tabs".to_string())?;
-            if tabs.get_all_tabs().is_empty() {
-                drop(tabs); // Release the lock before creating a new tab
-                self.create_tab("about:blank")?;
-            }
         }
 
         Ok(())
@@ -452,74 +468,68 @@ impl BrowserEngine {
         }
     }
 
-    fn handle_command(&mut self, command: BrowserCommand) -> Result<(), String> {
-        match command {
-            BrowserCommand::Navigate { url } => {
-                self.navigate(&url)
-            },
+    fn handle_command(&mut self, cmd: BrowserCommand) -> Result<(), WebViewError> {
+        match cmd {
             BrowserCommand::CreateTab { url } => {
-                if let Ok(mut tabs) = self.tabs.lock() {
-                    let id = tabs.create_tab(url.clone());
-                    self.publish_event(BrowserEvent::TabCreated {
-                        id,
-                        url: url.clone()
-                    })?;
-                    Ok(())
-                } else {
-                    Err("Failed to lock tab manager".to_string())
-                }
-            },
+                self.create_tab(&url)?;
+            }
             BrowserCommand::CloseTab { id } => {
-                if let Ok(mut tabs) = self.tabs.lock() {
-                    if tabs.close_tab(id) {
-                        self.publish_event(BrowserEvent::TabClosed { id })?;
-                        Ok(())
-                    } else {
-                        Err(format!("Failed to close tab {}", id))
-                    }
-                } else {
-                    Err("Failed to lock tab manager".to_string())
-                }
-            },
+                self.close_tab(id)?;
+            }
             BrowserCommand::SwitchTab { id } => {
-                if let Ok(mut tabs) = self.tabs.lock() {
-                    if tabs.switch_to_tab(id) {
-                        self.publish_event(BrowserEvent::TabActivated { id })?;
-                        Ok(())
-                    } else {
-                        Err(format!("Failed to switch to tab {}", id))
-                    }
-                } else {
-                    Err("Failed to lock tab manager".to_string())
-                }
-            },
-            BrowserCommand::RecordEvent { event } => {
-                if let Ok(mut recorder) = self.recorder.lock() {
-                    recorder.record_event(event);
-                    Ok(())
-                } else {
-                    Err("Failed to lock event recorder".to_string())
-                }
-            },
-            BrowserCommand::PlayEvent { event } => {
-                // Handle the event based on its type
-                match event {
-                    BrowserEvent::Navigation { url } => self.navigate(&url),
-                    BrowserEvent::TabCreated { url, .. } => {
-                        if let Ok(mut tabs) = self.tabs.lock() {
-                            tabs.create_tab(url);
-                            Ok(())
-                        } else {
-                            Err("Failed to lock tab manager".to_string())
+                self.switch_to_tab(id)?;
+            }
+            BrowserCommand::Navigate { url } => {
+                if let Ok(tabs) = self.tabs.lock() {
+                    if let Some(active_tab) = tabs.get_active_tab() {
+                        if let Some(view) = &self.content_view {
+                            if let Ok(view) = view.lock() {
+                                view.load_url(&url);
+                            }
                         }
-                    },
-                    _ => {
-                        // Publish other events directly
-                        self.publish_event(event)
+                        // Update tab bar
+                        if let Some(ref tab_bar) = self.tab_bar {
+                            tab_bar.update_tab_url(active_tab.id, &url);
+                        }
                     }
                 }
             }
         }
+        Ok(())
+    }
+
+    fn handle_event(&mut self, event: Event<()>) -> Result<(), WebViewError> {
+        match event {
+            Event::WindowEvent { event, .. } => {
+                match event {
+                    WindowEvent::CloseRequested => {
+                        debug!("Window close requested");
+                        self.running = false;
+                    }
+                    WindowEvent::Resized(size) => {
+                        debug!("Window resized to: {:?}", size);
+                        if let Some(view) = &self.content_view {
+                            if let Ok(view) = view.lock() {
+                                let tab_height: u32 = 40; // Match the tab bar height
+                                let bounds = wry::Rect {
+                                    x: 0,
+                                    y: tab_height as i32,
+                                    width: size.width,
+                                    height: size.height.saturating_sub(tab_height),
+                                };
+                                view.set_bounds(bounds);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Event::MainEventsCleared => {
+                // Update window here
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     fn handle_ipc_message(&self, msg: &str) -> Result<(), String> {
@@ -613,7 +623,7 @@ impl BrowserEngine {
         }
     }
 
-    fn update_tab_visibility(&self) -> Result<(), String> {
+    fn update_tab_visibility(&self) -> Result<(), WebViewError> {
         if let Ok(tabs) = self.tabs.lock() {
             if let Some(active_tab) = tabs.get_active_tab() {
                 // Update WebView content
@@ -631,43 +641,35 @@ impl BrowserEngine {
             }
             Ok(())
         } else {
-            Err("Failed to lock tab manager".to_string())
+            Err(WebViewError::LockError("Failed to lock tab manager".to_string()))
         }
     }
 
-    fn create_content_view(&mut self, window: &Window) -> Result<(), String> {
-        debug!("Creating content view for window");
+    fn create_content_view(&mut self, window: &Window) -> Result<WebView, WebViewError> {
+        debug!("Starting content view creation");
         let tab_height: u32 = 40; // Match the tab bar height
         
         let window_size = window.inner_size();
-        debug!("Window size: {:?}", window_size);
+        debug!("Window size for content view: {:?}", window_size);
         
         let webview_bounds = wry::Rect {
-            x: 0_i32,
+            x: 0,
             y: tab_height as i32,
             width: window_size.width,
             height: window_size.height.saturating_sub(tab_height),
         };
-        debug!("WebView bounds: {:?}", webview_bounds);
+        debug!("Creating WebView with bounds: {:?}", webview_bounds);
 
+        debug!("Creating WebView");
         let webview = WebViewBuilder::new(window)
             .with_bounds(webview_bounds)
             .with_initialization_script(include_str!("../templates/window_chrome.js"))
             .with_html(include_str!("../templates/window_chrome.html"))
-            .map_err(|e| {
-                error!("Failed to create WebView builder: {}", e);
-                e.to_string()
-            })?
             .build()
-            .map_err(|e| {
-                error!("Failed to build WebView: {}", e);
-                e.to_string()
-            })?;
+            .map_err(WebViewError::InitError)?;
 
         debug!("WebView created successfully");
-        self.content_view = Some(Arc::new(Mutex::new(webview)));
-        debug!("Content view stored in Arc<Mutex>");
-        Ok(())
+        Ok(webview)
     }
 
     fn update_webview_bounds(&self, window: &Window) {
@@ -707,7 +709,7 @@ impl BrowserEngine {
             WindowEvent::KeyboardInput { event, .. } => {
                 use tao::keyboard::Key;
                 use crate::browser::keyboard::{KeyCode, ModifiersState, handle_keyboard_input, KeyCommand};
-                
+
                 // Early return if not a key press or is a repeat
                 if !matches!(event.state, ElementState::Pressed) || event.repeat {
                     return Ok(());
@@ -745,7 +747,7 @@ impl BrowserEngine {
                                 } else {
                                     None
                                 };
-                                
+
                                 // Close the tab if we got an ID
                                 if let Some(id) = tab_id {
                                     self.close_tab(id)?;
@@ -759,7 +761,7 @@ impl BrowserEngine {
                                 } else {
                                     None
                                 };
-                                
+
                                 // Switch to the tab if we got an ID
                                 if let Some(id) = tab_id {
                                     self.switch_to_tab(id)?;
@@ -793,6 +795,7 @@ impl Clone for BrowserEngine {
             content_view: self.content_view.clone(),
             window: self.window.clone(),
             initial_url: self.initial_url.clone(),
+            running: self.running,
         }
     }
 }

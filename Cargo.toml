@@ -19,6 +19,7 @@ anyhow = "1.0.79"
 chrono = "0.4"
 dotenv = "0.15"
 url = "2.5.0"
+thiserror = "1.0"
 
 [dev-dependencies]
 assert_cmd = "2.0"
