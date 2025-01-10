@@ -244,7 +244,7 @@ impl BrowserEngine {
 
     pub fn run(&mut self) -> Result<(), String> {
         debug!("Starting browser engine");
-        
+
         let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
             .with_title("Browser")
@@ -285,9 +285,9 @@ impl BrowserEngine {
         }
 
         let browser = Arc::new(Mutex::new(self.clone()));
-        
+
         debug!("Starting event loop");
-        
+
         event_loop.run(move |event, _window_target, control_flow| {
             *control_flow = ControlFlow::Wait;
 
@@ -332,7 +332,7 @@ impl BrowserEngine {
                         if let Err(e) = browser.handle_window_event(&event, &window) {
                             error!("Error handling window event: {}", e);
                         }
-                        
+
                         if let WindowEvent::CloseRequested = event {
                             debug!("Window close requested, exiting");
                             *control_flow = ControlFlow::Exit;
@@ -685,7 +685,7 @@ impl BrowserEngine {
     }
 
     /// Handle keyboard and window events with proper error handling and state management.
-    /// 
+    ///
     /// # Supported keyboard shortcuts:
     /// - Ctrl+T: Create new tab
     /// - Ctrl+W: Close current tab
@@ -699,92 +699,70 @@ impl BrowserEngine {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 use tao::keyboard::Key;
+                use crate::browser::keyboard::{KeyCode, ModifiersState, handle_keyboard_input, KeyCommand};
                 
                 // Early return if not a key press or is a repeat
                 if !matches!(event.state, ElementState::Pressed) || event.repeat {
                     return Ok(());
                 }
 
-                // Check if Control key is held
-                let is_ctrl = matches!(event.state, ElementState::Pressed);
-                
-                if is_ctrl {
-                    match &event.logical_key {
-                        Key::Character(c) if *c == String::from("t") => {
-                            debug!("Ctrl+T pressed, creating new tab");
-                            // Create new tab and provide user feedback
-                            match self.create_tab("about:blank") {
-                                Ok(_) => {
-                                    debug!("New tab created successfully");
-                                    Ok(())
-                                }
-                                Err(e) => {
-                                    error!("Failed to create new tab: {}", e);
-                                    Err(format!("Failed to create new tab: {}", e))
-                                }
-                            }
-                        }
-                        Key::Character(c) if *c == String::from("w") => {
-                            debug!("Ctrl+W pressed, closing current tab");
-                            // Get active tab ID in a separate scope to release lock quickly
-                            let active_tab_id = {
-                                let tabs = self.tabs.lock()
-                                    .map_err(|_| "Failed to lock tabs".to_string())?;
-                                tabs.get_active_tab()
-                                    .map(|tab| tab.id)
-                                    .ok_or_else(|| "No active tab to close".to_string())?
-                            };
+                // Convert tao key event to our internal types
+                let key_code = match &event.logical_key {
+                    Key::Character(c) if *c == String::from("t") || *c == String::from("T") => Some(KeyCode::KeyT),
+                    Key::Character(c) if *c == String::from("w") || *c == String::from("W") => Some(KeyCode::KeyW),
+                    Key::Tab => Some(KeyCode::Digit1), // For now, map Tab to first tab
+                    _ => None
+                };
 
-                            // Close tab and provide user feedback
-                            match self.close_tab(active_tab_id) {
-                                Ok(_) => {
-                                    debug!("Tab closed successfully");
-                                    Ok(())
-                                }
-                                Err(e) => {
-                                    error!("Failed to close tab: {}", e);
-                                    Err(format!("Failed to close tab: {}", e))
-                                }
-                            }
-                        }
-                        Key::Tab => {
-                            debug!("Ctrl+Tab pressed, switching tab");
-                            // Get next tab ID in a separate scope to release lock quickly
-                            let next_tab_id = {
-                                let tabs = self.tabs.lock()
-                                    .map_err(|_| "Failed to lock tabs".to_string())?;
-                                
-                                // Get current active tab
-                                let active_tab = tabs.get_active_tab()
-                                    .ok_or_else(|| "No active tab".to_string())?;
-                                let current_id = active_tab.id;
-                                
-                                // Find next tab ID
-                                let all_tabs = tabs.get_all_tabs();
-                                all_tabs.iter()
-                                    .find(|t| t.id > current_id)
-                                    .or_else(|| all_tabs.first())
-                                    .map(|tab| tab.id)
-                                    .ok_or_else(|| "No tab to switch to".to_string())?
-                            };
+                // Create modifiers state
+                let modifiers = ModifiersState {
+                    ctrl: event.state == ElementState::Pressed,
+                    alt: false,
+                    shift: false,
+                    meta: false,
+                };
 
-                            // Switch tab and provide user feedback
-                            match self.switch_to_tab(next_tab_id) {
-                                Ok(_) => {
-                                    debug!("Tab switch successful");
-                                    Ok(())
-                                }
-                                Err(e) => {
-                                    error!("Failed to switch tab: {}", e);
-                                    Err(format!("Failed to switch tab: {}", e))
+                // Handle the key command if we have a valid key code
+                if let Some(key_code) = key_code {
+                    if let Some(command) = handle_keyboard_input(key_code, modifiers) {
+                        match command {
+                            KeyCommand::NewTab => {
+                                debug!("Creating new tab");
+                                self.create_tab("about:blank")?;
+                            }
+                            KeyCommand::CloseTab => {
+                                debug!("Closing current tab");
+                                // Get the tab ID before releasing the lock
+                                let tab_id = if let Ok(tabs) = self.tabs.lock() {
+                                    tabs.get_active_tab().map(|tab| tab.id)
+                                } else {
+                                    None
+                                };
+                                
+                                // Close the tab if we got an ID
+                                if let Some(id) = tab_id {
+                                    self.close_tab(id)?;
                                 }
                             }
+                            KeyCommand::SwitchTab(index) => {
+                                debug!("Switching to tab {}", index);
+                                // Get the tab ID before releasing the lock
+                                let tab_id = if let Ok(tabs) = self.tabs.lock() {
+                                    tabs.get_all_tabs().get(index).map(|tab| tab.id)
+                                } else {
+                                    None
+                                };
+                                
+                                // Switch to the tab if we got an ID
+                                if let Some(id) = tab_id {
+                                    self.switch_to_tab(id)?;
+                                }
+                            }
+                            _ => {} // Ignore other commands for now
                         }
-                        _ => Ok(())
                     }
-                } else {
-                    Ok(())
                 }
+                Ok(())
             }
             WindowEvent::CloseRequested => {
                 debug!("Window close requested");
