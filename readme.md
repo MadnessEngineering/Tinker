@@ -43,6 +43,61 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
    - Metrics Workshop
    - Video Engineering Station
 
+### Component Workshop Design (New Architecture)
+
+1. State Foundry (`StateManager`)
+   - Tab State Forge
+   - Window State Workshop
+   - Configuration Anvil
+   - Settings Storage
+
+2. View Assembly Line (`ViewManager`)
+   - WebView Factory
+   - Window Chrome Shop
+   - Tab UI Workshop
+   - Layout Engineering
+
+3. Event Signal Tower (`EventManager`)
+   - MQTT Control Station
+   - Event Recording Press
+   - Replay Engineering Shop
+   - Command Distribution Network
+
+4. Input Control Station (`InputManager`)
+   - Keyboard Command Factory
+   - Mouse Event Workshop
+   - Shortcut Engineering
+   - Focus Control Unit
+
+5. Navigation Bridge (`NavigationManager`)
+   - URL Processing Plant
+   - History Assembly Line
+   - Redirect Control Unit
+   - Security Checkpoint
+
+Each component will:
+- Be wrapped in Arc<RwLock<_>> for thread-safe access
+- Have its own dedicated channel for command processing
+- Maintain independent state that can be borrowed without blocking others
+- Communicate through message passing rather than direct mutation
+
+### Lessons Learned (Updated)
+
+#### Component Architecture
+- Split large managers into focused, independently borrowable components
+- Use message passing between components to avoid mutex contention
+- Implement RwLock for better concurrent read access
+- Design components around single responsibility principle
+- Use channels for inter-component communication
+- Maintain clear ownership boundaries between components
+
+#### Thread Safety (Updated)
+- Replace Arc<Mutex<T>> with Arc<RwLock<T>> where possible for better concurrency
+- Design components to be independently borrowable
+- Use message passing instead of shared state where possible
+- Implement proper Drop traits for cleanup
+- Use dedicated channels per component to prevent blocking
+
 ## Recent Achievements
 - ✨ Implemented robust tab management system with thread-safe state handling
 - 🔄 Created event monitoring system with fixed-size circular buffer
