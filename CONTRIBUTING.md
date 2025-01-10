@@ -326,12 +326,14 @@ This section maintains a structured knowledge graph for AI assistants working on
 }
 
 ### AI Assistant Guidelines
+
 1. Code Changes {
    - Always use available tool functions
    - Follow semantic commit messages
    - Update tests for changes
    - Document new functionality
-   - Handle errors gracefully wi
+   - Use message passing instead of shared state where possible
+   - Implement proper Drop traits for cleanup
 }
 
 2. Documentation {
@@ -339,6 +341,8 @@ This section maintains a structured knowledge graph for AI assistants working on
    - Document architectural decisions
    - Maintain clear component boundaries
    - Update relevant docs for changes
+   - Maintain "Lessons Learned" file for important details
+   - Document error handling and user feedback mechanisms
 }
 
 3. Testing {
@@ -346,4 +350,50 @@ This section maintains a structured knowledge graph for AI assistants working on
    - Update integration tests
    - Document test scenarios
    - Handle edge cases
+   - Ensure comprehensive test coverage for complex UI features
+   - Test error handling paths
+   - Verify state synchronization in multi-threaded operations
+   - Test cleanup and resource management
+}
+
+4. UI Component Management {
+   - Comment out code instead of deleting when dealing with complex UI elements
+   - Ensure proper WebView ownership and cleanup
+   - Maintain explicit state synchronization between UI and backend
+   - Handle z-index management carefully
+   - Implement proper event handler cleanup
+   - Use !important CSS rules for critical UI elements
+   - Ensure proper component encapsulation
+}
+
+5. Architecture & State Management {
+   - Use Arc<RwLock<T>> instead of Arc<Mutex<T>> where possible
+   - Design components to be independently borrowable
+   - Follow single responsibility principle
+   - Use dedicated channels per component for communication
+   - Keep related types in the same module to avoid circular dependencies
+   - Maintain clear separation between UI and business logic
+   - Ensure proper cleanup of resources
+   - Maintain clear ownership boundaries
+   - Design for concurrent access patterns
+}
+
+6. Version Control Practices {
+   - Reference git history to understand code evolution
+   - Create clean, atomic commits with clear messages
+   - Use one-line commit messages for git log --oneline readability
+   - Include detailed descriptions for complex changes
+   - Squash commits when appropriate to improve history clarity
+   - Tag significant changes for easier reference
+   - Use git history in error handling to understand and restore code
+}
+
+7. Error Handling {
+   - Provide comprehensive error handling with user feedback
+   - Use map_err for consistent error type conversion
+   - Handle all potential error cases with clear messages
+   - Convert WebView errors to String for consistent handling
+   - Release locks before performing operations that might need them
+   - Check lock acquisition success before using Mutex guards
+   - Ensure proper cleanup on error paths
 }
