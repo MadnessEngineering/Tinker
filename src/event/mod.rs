@@ -7,7 +7,17 @@ use std::time::Duration;
 use url::Url;
 use serde_json::json;
 use std::sync::mpsc::Sender;
-use crate::commands::BrowserCommand;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserCommand {
+    Navigate { url: String },
+    CreateTab { url: String },
+    CloseTab { id: usize },
+    SwitchTab { id: usize },
+    RecordEvent { event: BrowserEvent },
+    PlayEvent { event: BrowserEvent },
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BrowserEvent {

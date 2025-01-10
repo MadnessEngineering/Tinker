@@ -26,8 +26,7 @@ use self::{
     replay::{EventRecorder, EventPlayer},
 };
 
-use crate::event::{BrowserEvent, EventSystem};
-use crate::commands::BrowserCommand;
+use crate::event::{BrowserEvent, EventSystem, BrowserCommand};
 
 pub struct BrowserEngine {
     pub headless: bool,
@@ -44,7 +43,7 @@ pub struct BrowserEngine {
 impl BrowserEngine {
     pub fn new(headless: bool, events: Option<Arc<Mutex<EventSystem>>>) -> Self {
         if let Some(ref events) = events {
-            if let Ok(events) = events.lock() {
+            if let Ok(_events) = events.lock() {
                 info!("Browser engine initialized with event system");
             } else {
                 error!("Failed to lock event system during initialization");
@@ -277,7 +276,8 @@ impl BrowserEngine {
         self.tab_bar = Some(tab_bar);
 
         // Initialize WebView
-        let browser_clone = Arc::new(Mutex::new(self.clone()));
+        let _browser_clone = Arc::new(Mutex::new(self.clone()));
+        let cmd_tx_for_ipc = cmd_tx.clone();
         let webview = WebViewBuilder::new(&window)
             .with_bounds(wry::Rect {
                 x: 0_i32,
@@ -286,13 +286,15 @@ impl BrowserEngine {
                 height: window.inner_size().height.saturating_sub(40),
             })
             .with_initialization_script(include_str!("../templates/window_chrome.js"))
-            .with_html(include_str!("../templates/window_chrome.html"))?
+            .with_html(include_str!("../templates/window_chrome.html"))
+            .map_err(|e| e.to_string())?
             .with_ipc_handler(move |msg: String| {
                 if let Ok(cmd) = serde_json::from_str::<BrowserCommand>(&msg) {
-                    let _ = cmd_tx.send(cmd);
+                    let _ = cmd_tx_for_ipc.send(cmd);
                 }
             })
-            .build()?;
+            .build()
+            .map_err(|e| e.to_string())?;
         
         // Set initial WebView bounds
         let size = window.inner_size();
@@ -424,8 +426,8 @@ impl BrowserEngine {
 
         // Load the URL if this is the active tab
         if let Ok(tabs) = self.tabs.lock() {
-            if let Some(tab) = tabs.get_tab(id) {
-                if Some(id) == tabs.active_tab {
+            if let Some(_tab) = tabs.get_tab(id) {
+                if tabs.is_active_tab(id) {
                     // Handle active tab
                 }
             }
@@ -454,45 +456,40 @@ impl BrowserEngine {
 
     pub fn close_tab(&mut self, id: usize) -> Result<(), String> {
         // Get the next active tab ID before closing
-        let next_active_id = if let Ok(tabs) = self.tabs.lock() {
-            if let Some(tab) = tabs.get_tab(id) {
-                if Some(id) == tabs.active_tab {
-                    // Find another tab to activate
-                    tabs.get_all_tabs().iter()
-                        .find(|t| t.id != id)
-                        .map(|t| t.id)
-                }
-                else {
-                    None
-                }
+        let next_active_id = {
+            let tabs = self.tabs.lock().map_err(|_| "Failed to lock tabs".to_string())?;
+            if tabs.is_active_tab(id) {
+                tabs.get_all_tabs().iter()
+                    .find(|t| t.id != id)
+                    .map(|t| t.id)
             } else {
-                return Err("Tab not found".to_string());
+                None
             }
-        } else {
-            return Err("Failed to lock tabs".to_string());
         };
 
         // Close the tab
-        if let Ok(mut tabs) = self.tabs.lock() {
-            if tabs.close_tab(id) {
-                // Publish tab closed event
-                self.publish_event(BrowserEvent::TabClosed { id })?;
-
-                // Switch to another tab if needed
-                if let Some(next_id) = next_active_id {
-                    self.switch_to_tab(next_id)?;
-                } else if tabs.get_all_tabs().is_empty() {
-                    // Create a new blank tab if this was the last one
-                    self.create_tab("about:blank")?;
-                }
-
-                Ok(())
-            } else {
-                Err("Tab not found".to_string())
+        {
+            let mut tabs = self.tabs.lock().map_err(|_| "Failed to lock tabs".to_string())?;
+            if !tabs.close_tab(id) {
+                return Err("Tab not found".to_string());
             }
-        } else {
-            Err("Failed to lock tabs".to_string())
+            // Publish tab closed event
+            self.publish_event(BrowserEvent::TabClosed { id })?;
         }
+
+        // Switch to another tab if needed
+        if let Some(next_id) = next_active_id {
+            self.switch_to_tab(next_id)?;
+        } else {
+            // Create a new blank tab if this was the last one
+            let tabs = self.tabs.lock().map_err(|_| "Failed to lock tabs".to_string())?;
+            if tabs.get_all_tabs().is_empty() {
+                drop(tabs); // Release the lock before creating a new tab
+                self.create_tab("about:blank")?;
+            }
+        }
+
+        Ok(())
     }
 
     pub fn get_recent_events(&self, count: usize) -> Vec<String> {
@@ -650,7 +647,7 @@ impl BrowserEngine {
                 tab.url = url.to_string();
                 
                 // If this is the active tab, update the WebView
-                if Some(id) == tabs.active_tab {
+                if tabs.is_active_tab(id) {
                     if let Some(view) = &self.content_view {
                         if let Ok(view) = view.lock() {
                             view.load_url(url);
@@ -706,8 +703,10 @@ impl BrowserEngine {
                 height: window.inner_size().height.saturating_sub(tab_height),
             })
             .with_initialization_script(include_str!("../templates/window_chrome.js"))
-            .with_html(include_str!("../templates/window_chrome.html"))?
-            .build()?;
+            .with_html(include_str!("../templates/window_chrome.html"))
+            .map_err(|e| e.to_string())?
+            .build()
+            .map_err(|e| e.to_string())?;
 
         self.content_view = Some(Arc::new(Mutex::new(webview)));
         Ok(())

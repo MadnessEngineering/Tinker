@@ -11,10 +11,14 @@ fn test_event_serialization() {
     assert!(json.contains("example.com"));
 
     // Test TabCreated event
-    let event = BrowserEvent::TabCreated { id: 1 };
+    let event = BrowserEvent::TabCreated { 
+        id: 1,
+        url: "https://example.com".to_string(),
+    };
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("TabCreated"));
     assert!(json.contains("1"));
+    assert!(json.contains("example.com"));
 
     // Test TabUrlChanged event
     let event = BrowserEvent::TabUrlChanged {
@@ -54,7 +58,10 @@ fn test_event_topic_mapping() {
     assert_eq!(topic, "browser/navigation");
 
     // Test TabCreated event topic
-    let event = BrowserEvent::TabCreated { id: 1 };
+    let event = BrowserEvent::TabCreated { 
+        id: 1,
+        url: "https://example.com".to_string(),
+    };
     let topic = match &event {
         BrowserEvent::TabCreated { .. } => "browser/tabs/created",
         _ => panic!("Wrong topic"),
