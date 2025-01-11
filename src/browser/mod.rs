@@ -6,7 +6,8 @@ pub mod tab_ui;
 use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use tracing::{debug, error, info};
-use tao::event_loop::{ControlFlow, Event, EventLoop};
+use tao::event_loop::{ControlFlow, EventLoop};
+use tao::event::{Event, WindowEvent};
 
 use crate::event::EventSystem;
 use self::tabs::TabManager;
@@ -108,8 +109,17 @@ impl BrowserEngine {
                 *control_flow = ControlFlow::Wait;
 
                 match event {
-                    Event::WindowEvent { event, .. } => {
-                        // Handle window events
+                    Event::WindowEvent { 
+                        event: WindowEvent::CloseRequested,
+                        ..
+                    } => {
+                        *control_flow = ControlFlow::Exit;
+                    }
+                    Event::WindowEvent { 
+                        event: WindowEvent::Resized(size),
+                        ..
+                    } => {
+                        debug!("Window resized to {:?}", size);
                     }
                     _ => (),
                 }
