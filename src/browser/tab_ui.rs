@@ -3,7 +3,7 @@ use std::sync::mpsc::Sender;
 use wry::{WebView, WebViewBuilder};
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error};
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 
 #[derive(Clone)]
 pub struct TabBar {
@@ -12,7 +12,7 @@ pub struct TabBar {
 }
 
 impl TabBar {
-    pub fn new(window: &Window, cmd_tx: Sender<TabCommand>) -> Result<Self, String> {
+    pub fn new(window: &Window, cmd_tx: Sender<TabCommand>) -> Result<Self> {
         debug!("Creating new TabBar");
         
         let webview = WebViewBuilder::new(window)
@@ -24,9 +24,8 @@ impl TabBar {
             })
             .with_initialization_script(include_str!("../templates/tab_bar.js"))
             .with_html(include_str!("../templates/tab_bar.html"))
-            .map_err(|e| format!("Failed to create tab bar WebView: {}", e))?
             .build()
-            .map_err(|e| format!("Failed to build tab bar WebView: {}", e))?;
+            .map_err(|e| anyhow!("Failed to create tab bar WebView: {}", e))?;
 
         debug!("TabBar WebView created successfully");
         
@@ -107,16 +106,17 @@ pub enum TabCommand {
     UpdateTitle { id: usize, title: String },
 } 
 
-pub fn create_tab_bar(window: &impl raw_window_handle::HasWindowHandle) -> Result<WebView> {
+pub fn create_tab_bar(window: &Window) -> Result<WebView> {
     let webview = WebViewBuilder::new(window)
         .with_bounds(wry::Rect {
             x: 0_i32,
             y: 0_i32,
-            width: 800_u32,
+            width: window.inner_size().width,
             height: 40_u32,
         })
         .with_html(include_str!("../templates/tab_bar.html"))
-        .build()?;
+        .build()
+        .map_err(|e| anyhow!("Failed to create tab bar WebView: {}", e))?;
 
     Ok(webview)
 } 
