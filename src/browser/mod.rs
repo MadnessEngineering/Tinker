@@ -264,6 +264,50 @@ impl TabManager {
         tabs.push(new_tab);
         Ok(())
     }
+
+    /// Reorder a tab from one position to another
+    pub fn reorder_tab(&self, from_index: usize, to_index: usize) -> BrowserResult<()> {
+        let mut tabs = self.tabs.lock()
+            .map_err(|e| format!("Failed to lock tabs: {}", e))?;
+        
+        // Validate indices
+        if from_index >= tabs.len() || to_index >= tabs.len() {
+            return Err("Invalid tab index".into());
+        }
+
+        // Move the tab
+        let tab = tabs.remove(from_index);
+        tabs.insert(to_index, tab);
+
+        // Update active tab index if needed
+        let mut active_tab = self.active_tab.lock()
+            .map_err(|e| format!("Failed to lock active tab: {}", e))?;
+        
+        *active_tab = match *active_tab {
+            i if i == from_index => to_index,
+            i if i > from_index && i <= to_index => i - 1,
+            i if i < from_index && i >= to_index => i + 1,
+            i => i,
+        };
+
+        Ok(())
+    }
+
+    /// Get all tab IDs in order
+    pub fn get_tab_ids(&self) -> BrowserResult<Vec<String>> {
+        let tabs = self.tabs.lock()
+            .map_err(|e| format!("Failed to lock tabs: {}", e))?;
+        
+        Ok(tabs.iter().map(|tab| tab.id.clone()).collect())
+    }
+
+    /// Get the index of a tab by its ID
+    pub fn get_tab_index(&self, id: &str) -> BrowserResult<Option<usize>> {
+        let tabs = self.tabs.lock()
+            .map_err(|e| format!("Failed to lock tabs: {}", e))?;
+        
+        Ok(tabs.iter().position(|tab| tab.id == id))
+    }
 }
 
 mod event_viewer;
@@ -360,5 +404,62 @@ impl BrowserEngine {
         }
         self.update_navigation_state()?;
                 Ok(())
+    }
+
+    /// Handle tab commands from the UI
+    pub fn handle_tab_command(&self, command: TabCommand) -> BrowserResult<()> {
+        match command {
+            TabCommand::Create { url } => {
+                self.create_tab(Some(&url))?;
+            }
+            TabCommand::Close { id } => {
+                // TODO: Implement tab closing
+            }
+            TabCommand::Switch { id } => {
+                self.tab_manager.set_active_tab(id)?;
+                self.update_navigation_state()?;
+            }
+            TabCommand::UpdateUrl { id, url } => {
+                if let Some(index) = self.tab_manager.get_tab_index(&id.to_string())? {
+                    if index == *self.tab_manager.active_tab.lock().unwrap() {
+                        self.tab_manager.navigate(&url)?;
+                    }
+                }
+            }
+            TabCommand::UpdateTitle { id: _, title: _ } => {
+                // TODO: Implement title updates
+            }
+            TabCommand::Reload => {
+                self.tab_manager.reload()?;
+            }
+            TabCommand::Stop => {
+                self.tab_manager.stop_loading()?;
+            }
+            TabCommand::Split => {
+                self.tab_manager.split_tab()?;
+            }
+            TabCommand::DragStart { id } => {
+                self.tab_bar.start_tab_drag(&id)?;
+            }
+            TabCommand::DragEnd { id, target_id } => {
+                // Get indices for reordering
+                let from_index = self.tab_manager.get_tab_index(&id)?
+                    .ok_or_else(|| format!("Invalid source tab ID: {}", id))?;
+                let to_index = self.tab_manager.get_tab_index(&target_id)?
+                    .ok_or_else(|| format!("Invalid target tab ID: {}", target_id))?;
+
+                // Reorder the tabs
+                self.tab_manager.reorder_tab(from_index, to_index)?;
+
+                // Update UI
+                let tab_ids = self.tab_manager.get_tab_ids()?;
+                self.tab_bar.update_tab_order(&tab_ids)?;
+                self.tab_bar.end_tab_drag()?;
+                
+                // Update navigation state for the new active tab
+                self.update_navigation_state()?;
+            }
+        }
+        Ok(())
     }
 }

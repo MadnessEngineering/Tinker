@@ -8,12 +8,12 @@ use crate::browser::error::BrowserResult;
 /// Manages the browser's tab bar UI
 #[derive(Clone)]
 pub struct TabBar {
-    webview: Arc<wry::WebView>,
+    webview: Arc<WebView>,
 }
 
 impl TabBar {
     pub fn new() -> Self {
-        // Initialize tab bar WebView
+        // Initialize tab bar WebView with drag and drop support
         let webview = WebViewBuilder::new()
             .with_html(include_str!("../templates/tab_bar.html"))
             .with_initialization_script(include_str!("../templates/tab_bar.js"))
@@ -68,6 +68,39 @@ impl TabBar {
             .map_err(|e| format!("Failed to update loading state: {}", e))?;
         Ok(())
     }
+
+    /// Update tab order after reordering
+    pub fn update_tab_order(&self, tab_ids: &[String]) -> BrowserResult<()> {
+        let ids_json = serde_json::to_string(tab_ids)
+            .map_err(|e| format!("Failed to serialize tab IDs: {}", e))?;
+        
+        let script = format!(
+            "window.tabBar.updateTabOrder({});",
+            ids_json
+        );
+        self.webview.evaluate_script(&script)
+            .map_err(|e| format!("Failed to update tab order: {}", e))?;
+        Ok(())
+    }
+
+    /// Start tab dragging
+    pub fn start_tab_drag(&self, id: &str) -> BrowserResult<()> {
+        let script = format!(
+            "window.tabBar.startDrag('{}');",
+            id
+        );
+        self.webview.evaluate_script(&script)
+            .map_err(|e| format!("Failed to start drag: {}", e))?;
+        Ok(())
+    }
+
+    /// End tab dragging
+    pub fn end_tab_drag(&self) -> BrowserResult<()> {
+        let script = "window.tabBar.endDrag();";
+        self.webview.evaluate_script(script)
+            .map_err(|e| format!("Failed to end drag: {}", e))?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -81,4 +114,6 @@ pub enum TabCommand {
     Reload,
     Stop,
     Split,
+    DragStart { id: String },
+    DragEnd { id: String, target_id: String },
 } 
