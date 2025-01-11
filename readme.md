@@ -205,3 +205,35 @@ Note: The `screenshots/` directory is ignored by git to avoid committing large b
 - Maintain comprehensive error handling
 - Document API changes and breaking changes
 - Test across different platforms before merging
+
+## Known Issues
+
+### JavaScript Engine Integration
+Currently experiencing platform-specific issues with JavaScript engine integration on Windows:
+
+1. V8 Engine:
+   - Build fails with precompiled binaries
+   - Source compilation issues with build dependencies
+   - Status: Investigating alternative build configurations
+
+2. SpiderMonkey:
+   - Build script issues with path handling
+   - Compatibility issues with Windows paths
+   - Status: Need to update build scripts for Windows paths
+
+3. JavaScriptCore:
+   - Missing pkg-config dependency on Windows
+   - Requires glib system dependencies
+   - Status: Investigating Windows-specific build requirements
+
+### Workaround
+Until these issues are resolved:
+- JavaScript functionality is temporarily disabled on Windows
+- Focus is on core browser functionality and Windows API integration
+- JavaScript engine selection will be re-enabled once platform-specific issues are resolved
+
+### Next Steps
+1. Complete Windows API integration
+2. Implement basic browser functionality
+3. Revisit JavaScript engine integration with platform-specific builds
+4. Add proper error handling for missing JavaScript functionality
