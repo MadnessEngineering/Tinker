@@ -4,6 +4,7 @@ pub mod tabs;
 pub mod tab_ui;
 pub mod native_ui;
 pub mod keyboard;
+pub mod event;
 
 use std::sync::{Arc, Mutex};
 use anyhow::Result;
@@ -11,7 +12,7 @@ use tao::window::{Window, WindowBuilder};
 use wry::WebView;
 
 use crate::platform::windows::{WindowsConfig, WindowsManager};
-use tinker::event::EventSystem;
+use self::event::EventSystem;
 
 pub struct BrowserEngine {
     event_loop: tao::event_loop::EventLoop<()>,
