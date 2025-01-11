@@ -4,8 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["webview", "native-ui"]
-full = ["webview", "native-ui", "v8", "javascriptcore", "spidermonkey"]
+default = ["webview", "native-ui", "cli", "config"]
+full = [
+    "webview", "native-ui",
+    "v8", "javascriptcore", "spidermonkey",
+    "cli", "config", "api", "metrics",
+    "mqtt", "tracing"
+]
 
 # Core features
 webview = ["dep:wry", "dep:tao"]
@@ -16,14 +21,22 @@ v8 = ["dep:v8"]
 javascriptcore = ["dep:javascriptcore-rs"]
 spidermonkey = ["dep:mozjs"]
 
+# CLI and configuration
+cli = ["dep:clap"]
+config = ["dep:serde", "dep:serde_json"]
+
+# API and metrics
+api = ["dep:axum", "dep:tokio", "dep:tower", "dep:tower-http"]
+metrics = ["dep:prometheus"]
+
+# Event system
+mqtt = ["dep:rumqttc"]
+tracing = ["dep:tracing", "dep:tracing-subscriber"]
+
 [dependencies]
 # Core dependencies (always included)
 anyhow = "1.0.79"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 raw-window-handle = "0.5.2"
-serde = { version = "1.0.195", features = ["derive"] }
-serde_json = "1.0.111"
 
 # Optional dependencies based on features
 wry = { version = "0.37", features = ["transparent"], optional = true }
@@ -31,6 +44,23 @@ tao = { version = "0.25", features = ["rwh_05"], optional = true }
 v8 = { version = "0.74", optional = true }
 javascriptcore-rs = { version = "0.14", optional = true }
 mozjs = { version = "0.10.1", optional = true }
+
+# CLI and config dependencies
+clap = { version = "4.4", features = ["derive"], optional = true }
+serde = { version = "1.0.195", features = ["derive"], optional = true }
+serde_json = { version = "1.0.111", optional = true }
+
+# API and metrics dependencies
+axum = { version = "0.7", features = ["http2"], optional = true }
+tokio = { version = "1.35.1", features = ["full"], optional = true }
+tower = { version = "0.5", optional = true }
+tower-http = { version = "0.5", features = ["trace"], optional = true }
+prometheus = { version = "0.13", optional = true }
+
+# Event system dependencies
+rumqttc = { version = "0.24", optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # Platform-specific dependencies
 [target.'cfg(windows)'.dependencies]
