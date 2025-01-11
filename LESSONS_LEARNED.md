@@ -64,12 +64,22 @@
 - Tab bar visibility must be maintained during tab operations
 - WebView bounds must be updated after tab operations to maintain layout
 - Use !important CSS rules for critical UI elements that must stay visible
+- Window and WebView visibility should be set explicitly during initialization
+- Focus management is crucial for proper window interaction
+- Loading states should provide clear visual feedback
+- UI components should maintain visibility after bounds updates
 
-### Menu System Design
-- Native menu APIs can be inconsistent across platforms
-- HTML/CSS menus provide better control and consistency
-- WebView-based UI components need proper z-index management
-- Keyboard shortcuts should be handled at both UI and system levels
+### UI Design Best Practices
+- Use CSS variables for consistent theming across components
+- Implement loading indicators for better user feedback
+- Add tooltips to improve button discoverability
+- Provide visual feedback for all user interactions
+- Handle both URL and search inputs intelligently
+- Use transitions for smooth visual changes
+- Maintain proper z-indexing for overlapping elements
+- Implement proper error states and loading feedback
+- Use modern design patterns for better user experience
+- Keep UI responsive during background operations
 
 ### Event System Design
 - Events should have clear success/failure feedback
@@ -77,6 +87,18 @@
 - Error handling should be comprehensive and user-friendly
 - Event handlers should be properly scoped and cleaned up
 - Event propagation should be predictable and traceable
+- Window visibility events require special attention
+- Focus events should be handled appropriately
+- Loading state changes should be propagated to UI
+
+### Testing Best Practices
+- Use DEBUG=TRUE cargo test -- --nocapture | cat for detailed debug output
+- Test window creation and visibility explicitly
+- Verify WebView initialization and visibility
+- Check UI component interactions and state changes
+- Test focus management and window interactions
+- Validate loading states and animations
+- Ensure proper cleanup after tests
 
 ### Code Organization
 - Avoid circular dependencies by keeping related types in the same module
