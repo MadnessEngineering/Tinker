@@ -463,3 +463,113 @@ impl BrowserEngine {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wry::WebViewBuilder;
+
+    fn create_test_webview() -> WebView {
+        WebViewBuilder::new()
+            .with_transparent(true)
+            .with_visible(true)
+            .build()
+            .expect("Failed to create test WebView")
+    }
+
+    #[test]
+    fn test_tab_creation() {
+        let manager = TabManager::new();
+        
+        // Create first tab
+        let webview1 = create_test_webview();
+        let id1 = manager.create_tab(webview1).unwrap();
+        assert_eq!(id1, "tab_0");
+        
+        // Create second tab
+        let webview2 = create_test_webview();
+        let id2 = manager.create_tab(webview2).unwrap();
+        assert_eq!(id2, "tab_1");
+        
+        // Verify tab count
+        let tabs = manager.tabs.lock().unwrap();
+        assert_eq!(tabs.len(), 2);
+    }
+
+    #[test]
+    fn test_tab_reordering() {
+        let manager = TabManager::new();
+        
+        // Create three tabs
+        let webview1 = create_test_webview();
+        let id1 = manager.create_tab(webview1).unwrap();
+        
+        let webview2 = create_test_webview();
+        let id2 = manager.create_tab(webview2).unwrap();
+        
+        let webview3 = create_test_webview();
+        let id3 = manager.create_tab(webview3).unwrap();
+        
+        // Test moving middle tab to start
+        manager.reorder_tab(1, 0).unwrap();
+        let tabs = manager.get_tab_ids().unwrap();
+        assert_eq!(tabs, vec!["tab_1", "tab_0", "tab_2"]);
+        
+        // Test moving last tab to middle
+        manager.reorder_tab(2, 1).unwrap();
+        let tabs = manager.get_tab_ids().unwrap();
+        assert_eq!(tabs, vec!["tab_1", "tab_2", "tab_0"]);
+    }
+
+    #[test]
+    fn test_active_tab_tracking() {
+        let manager = TabManager::new();
+        
+        // Create two tabs
+        let webview1 = create_test_webview();
+        let _id1 = manager.create_tab(webview1).unwrap();
+        
+        let webview2 = create_test_webview();
+        let _id2 = manager.create_tab(webview2).unwrap();
+        
+        // Set second tab as active
+        manager.set_active_tab(1).unwrap();
+        assert_eq!(*manager.active_tab.lock().unwrap(), 1);
+        
+        // Move active tab
+        manager.reorder_tab(1, 0).unwrap();
+        assert_eq!(*manager.active_tab.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_invalid_reordering() {
+        let manager = TabManager::new();
+        
+        // Create one tab
+        let webview = create_test_webview();
+        let _id = manager.create_tab(webview).unwrap();
+        
+        // Test invalid source index
+        assert!(manager.reorder_tab(1, 0).is_err());
+        
+        // Test invalid target index
+        assert!(manager.reorder_tab(0, 1).is_err());
+    }
+
+    #[test]
+    fn test_tab_lookup() {
+        let manager = TabManager::new();
+        
+        // Create two tabs
+        let webview1 = create_test_webview();
+        let id1 = manager.create_tab(webview1).unwrap();
+        
+        let webview2 = create_test_webview();
+        let id2 = manager.create_tab(webview2).unwrap();
+        
+        // Test tab index lookup
+        assert_eq!(manager.get_tab_index(&id1).unwrap(), Some(0));
+        assert_eq!(manager.get_tab_index(&id2).unwrap(), Some(1));
+        assert_eq!(manager.get_tab_index("invalid_id").unwrap(), None);
+    }
+}
