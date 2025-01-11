@@ -73,24 +73,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.url.clone(),
     );
 
-    // Create initial tab
-    let tab_id = browser.create_tab("about:blank")?;
-
-    // Create additional tabs if requested
-    if let Some(num_tabs) = args.tabs {
-        info!("Creating {} tabs", num_tabs);
-        for i in 1..num_tabs {
-            browser.create_tab("about:blank")?;
-            info!("Created new tab {}", i);
-        }
-    }
-
-    // Load URL if provided
-    if let Some(url) = args.url {
-        browser.navigate(&url)?;
-        info!("Navigating to: {}", url);
-    }
-
     // Connect to event system after browser is initialized
     if let Some(ref events) = events {
         if let Ok(mut events) = events.lock() {
@@ -125,13 +107,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         browser.load_recording(&path)?;
         if let Some(speed) = args.replay_speed {
-            browser.set_replay_speed(speed);
+            let _ = browser.set_replay_speed(speed);
         }
-        browser.start_replay();
+        let _ = browser.start_replay();
         info!("Replaying events from {}", path);
     }
 
     // Start event loop
+    info!("Starting browser engine...");
     browser.run()?;
 
     Ok(())
