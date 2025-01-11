@@ -5,13 +5,12 @@ pub mod tab_ui;
 
 use std::sync::{Arc, Mutex};
 use anyhow::Result;
-use tracing::{debug, error, info};
-use tao::event_loop::{ControlFlow, EventLoop};
-use tao::event::{Event, WindowEvent};
+use tracing::info;
+use tao::window::{Window, WindowBuilder};
+use tao::event_loop::EventLoop;
 
 use crate::event::EventSystem;
 use self::tabs::TabManager;
-use self::tab_ui::{TabBar, TabCommand};
 
 #[cfg(target_os = "windows")]
 use crate::platform::windows::{WindowsManager, WindowsConfig, WindowsTheme};
@@ -97,6 +96,8 @@ impl BrowserEngine {
     }
 
     pub fn run(&mut self) -> Result<()> {
+        info!("Starting browser engine...");
+
         #[cfg(target_os = "windows")]
         {
             self.window_manager.run()?;
@@ -108,20 +109,11 @@ impl BrowserEngine {
             event_loop.run(move |event, _, control_flow| {
                 *control_flow = ControlFlow::Wait;
 
-                match event {
-                    Event::WindowEvent { 
-                        event: WindowEvent::CloseRequested,
-                        ..
-                    } => {
-                        *control_flow = ControlFlow::Exit;
-                    }
-                    Event::WindowEvent { 
-                        event: WindowEvent::Resized(size),
-                        ..
-                    } => {
-                        debug!("Window resized to {:?}", size);
-                    }
-                    _ => (),
+                if let Event::WindowEvent { 
+                    event: WindowEvent::CloseRequested,
+                    ..
+                } = event {
+                    *control_flow = ControlFlow::Exit;
                 }
             });
         }
