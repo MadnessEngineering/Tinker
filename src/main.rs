@@ -1,6 +1,6 @@
 use clap::Parser;
 use tracing::{debug, error, info};
-use std::sync::{Arc, Mutex};
+use std::{sync::{Arc, Mutex}, env};
 
 mod api;
 mod browser;
@@ -14,7 +14,6 @@ use crate::{
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "A craftsperson's browser", long_about = None)]
-
 struct Args {
     /// URL to load
     #[arg(short, long)]
@@ -47,12 +46,30 @@ struct Args {
     /// Speed multiplier for replay
     #[arg(long)]
     replay_speed: Option<f32>,
+
+    /// Debug mode
+    #[arg(long)]
+    debug: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    tracing_subscriber::fmt::init();
+    // Set default debug mode if not explicitly set in environment
+    if env::var("DEBUG").is_err() {
+        env::set_var("DEBUG", "TRUE");
+    }
+
+    // Initialize logging with more detailed format
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env()
+            .add_directive("tinker=debug".parse()?)
+            .add_directive("wry=debug".parse()?))
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_ids(true)
+        .with_target(true)
+        .init();
+
     info!("Starting Tinker Workshop...");
 
     // Parse command line arguments
@@ -66,11 +83,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Create browser instance
+    // Create browser instance with default URL if none provided
     let mut browser = BrowserEngine::new(
         args.headless,
         events.clone(),
-        args.url.clone(),
+        args.url.or_else(|| Some("about:blank".to_string())),
     );
 
     // Connect to event system after browser is initialized
