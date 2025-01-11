@@ -1,134 +1,95 @@
-use anyhow::Result;
-use wry::WebView;
-use windows::Win32::Foundation::HWND;
+use std::error::Error;
+use wry::{WebView, WebViewBuilder};
 use raw_window_handle::HasRawWindowHandle;
-use super::config::WindowsConfig;
-use crate::platform::PlatformWebView;
+use windows::Win32::Foundation::HWND;
+use super::window::Window;
 
-pub struct WindowsWebView {
+pub struct WebViewWrapper<T: HasRawWindowHandle> {
     webview: WebView,
-    hwnd: HWND,
-    config: WindowsConfig,
-    visible: bool,
+    _window: T,
 }
 
-impl WindowsWebView {
-    pub fn new(webview: WebView, hwnd: HWND, config: WindowsConfig) -> Self {
-        Self {
-            webview,
-            hwnd,
-            config,
-            visible: true,
-        }
-    }
-}
+impl<T: HasRawWindowHandle> WebViewWrapper<T> {
+    pub fn new(window: T) -> Result<Self, Box<dyn Error>> {
+        let hwnd = unsafe {
+            let handle = window.raw_window_handle();
+            match handle {
+                raw_window_handle::RawWindowHandle::Win32(handle) => {
+                    HWND(handle.hwnd as isize)
+                }
+                _ => return Err("Unsupported window handle type".into()),
+            }
+        };
 
-impl PlatformWebView for WindowsWebView {
-    fn new<T>(window: &T) -> Result<Self> 
-    where T: HasRawWindowHandle 
-    {
-        let hwnd = HWND(window.raw_window_handle().raw_handle() as isize);
-        let config = WindowsConfig::default();
-        let webview = WebView::new(window)?;
-        
+        let webview = WebViewBuilder::new(hwnd)
+            .with_transparent(true)
+            .build()?;
+
         Ok(Self {
             webview,
-            hwnd,
-            config,
-            visible: true,
+            _window: window,
         })
     }
 
-    fn navigate(&self, url: &str) -> Result<()> {
+    pub fn load_url(&self, url: &str) -> Result<(), Box<dyn Error>> {
         self.webview.load_url(url)?;
         Ok(())
     }
 
-    fn evaluate_script(&self, script: &str) -> Result<()> {
+    pub fn evaluate_script(&self, script: &str) -> Result<(), Box<dyn Error>> {
         self.webview.evaluate_script(script)?;
         Ok(())
     }
 
-    fn resize(&self, width: i32, height: i32) {
-        if let Some(view) = self.webview.window() {
-            view.set_inner_size(tao::dpi::LogicalSize::new(width as f64, height as f64));
-        }
+    pub fn resize(&self, width: i32, height: i32) {
+        self.webview.resize().unwrap();
     }
 
-    fn set_theme(&self, theme: &str) -> Result<()> {
-        // Windows-specific theme implementation
-        use windows::Win32::UI::WindowsAndMessaging::{SetWindowLongW, GWL_STYLE};
-        let style = match theme {
-            "dark" => self.config.get_dark_theme_style(),
-            "light" => self.config.get_light_theme_style(),
-            _ => self.config.get_default_style(),
-        };
-        
-        unsafe {
-            SetWindowLongW(self.hwnd, GWL_STYLE, style as i32);
-        }
-        Ok(())
-    }
-
-    fn set_title(&self, title: &str) -> Result<()> {
-        if let Some(window) = self.webview.window() {
+    pub fn set_title(&self, title: &str) {
+        if let Some(window) = self._window.window() {
             window.set_title(title);
         }
-        Ok(())
     }
 
-    fn set_visible(&self, visible: bool) -> Result<()> {
-        if let Some(window) = self.webview.window() {
+    pub fn set_visible(&self, visible: bool) {
+        if let Some(window) = self._window.window() {
             window.set_visible(visible);
         }
-        Ok(())
     }
 
-    fn get_position(&self) -> Result<(i32, i32)> {
-        if let Some(window) = self.webview.window() {
-            let pos = window.outer_position()?;
-            Ok((pos.x, pos.y))
-        } else {
-            Ok((0, 0))
+    pub fn set_resizable(&self, resizable: bool) {
+        if let Some(window) = self._window.window() {
+            window.set_resizable(resizable);
         }
     }
 
-    fn set_position(&self, x: i32, y: i32) -> Result<()> {
-        if let Some(window) = self.webview.window() {
-            window.set_outer_position(tao::dpi::LogicalPosition::new(x, y));
+    pub fn set_maximized(&self, maximized: bool) {
+        if let Some(window) = self._window.window() {
+            window.set_maximized(maximized);
         }
-        Ok(())
     }
 
-    fn handle_platform_message(&self, message: &str) -> Result<()> {
-        // Windows-specific message handling
-        match message {
-            "maximize" => {
-                if let Some(window) = self.webview.window() {
-                    window.set_maximized(true);
-                }
-            }
-            "minimize" => {
-                if let Some(window) = self.webview.window() {
-                    window.set_minimized(true);
-                }
-            }
-            "restore" => {
-                if let Some(window) = self.webview.window() {
-                    window.set_maximized(false);
-                    window.set_minimized(false);
-                }
-            }
-            _ => {}
+    pub fn set_minimized(&self, minimized: bool) {
+        if let Some(window) = self._window.window() {
+            window.set_minimized(minimized);
         }
-        Ok(())
     }
 
-    fn is_visible(&self) -> bool {
-        self.visible
+    pub fn set_decorations(&self, decorations: bool) {
+        if let Some(window) = self._window.window() {
+            window.set_decorations(decorations);
+        }
     }
 
-    fn get_parent_window(&self) -> Option<&dyn HasRawWindowHandle> {
-        self.webview.window().map(|w| w as &dyn HasRawWindowHandle)
+    pub fn set_always_on_top(&self, always_on_top: bool) {
+        if let Some(window) = self._window.window() {
+            window.set_always_on_top(always_on_top);
+        }
+    }
+
+    pub fn set_content_protection(&self, enabled: bool) {
+        if let Some(window) = self._window.window() {
+            window.set_content_protection(enabled);
+        }
     }
 } 

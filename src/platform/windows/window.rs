@@ -1,8 +1,18 @@
-use windows::Win32::UI::{Controls, WindowsAndMessaging};
-use windows::Win32::Foundation::{HWND, RECT, LPARAM, WPARAM, LRESULT, GetLastError};
+use std::error::Error;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM, LRESULT, GetLastError};
+use windows::Win32::UI::WindowsAndMessaging::{
+    WNDCLASSEXW, RegisterClassExW, CreateWindowExW, DefWindowProcW,
+    PostQuitMessage, GetMessageW, TranslateMessage, DispatchMessageW,
+    CS_HREDRAW, CS_VREDRAW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, MSG,
+};
+use windows::Win32::UI::HiDpi::{
+    SetProcessDpiAwareness, PROCESS_PER_MONITOR_DPI_AWARE,
+};
+use windows::Win32::UI::Controls::{
+    TCITEMW, TCM_INSERTITEMW, TCM_DELETEITEM, TCM_SETCURSEL,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC};
-use windows::Win32::UI::HiDpi::SetProcessDpiAwareness;
 use windows::core::{PCWSTR, PWSTR, w};
 use anyhow::{Result, anyhow};
 use tracing::debug;
