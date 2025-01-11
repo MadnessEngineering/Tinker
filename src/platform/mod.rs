@@ -18,10 +18,10 @@ pub use self::common::*;
 
 /// Platform-specific window creation options
 pub trait PlatformWindow {
-    fn create_window(&self) -> Result<tao::window::Window, Box<dyn std::error::Error>>;
     fn set_theme(&self, theme: WindowTheme);
     fn show(&self);
     fn hide(&self);
+    fn as_window(&self) -> &Window;
 }
 
 /// Platform-specific WebView creation options
@@ -48,9 +48,9 @@ pub enum PlatformError {
     #[error("WebView creation failed: {0}")]
     WebViewCreation(String),
     
-    #[error("Operation not supported on current platform")]
-    Unsupported,
+    #[error("Theme setting failed: {0}")]
+    ThemeError(String),
     
-    #[error("Platform-specific error: {0}")]
+    #[error("Other platform error: {0}")]
     Other(String),
 } 

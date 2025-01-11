@@ -31,12 +31,14 @@ pub const TRANSPARENT_WINDOWS: bool = false;
 /// Initialize the browser with default configuration
 pub fn init() -> Result<browser::BrowserEngine, Box<dyn std::error::Error>> {
     let config = platform::common::utils::get_default_window_config();
-    browser::BrowserEngine::new(config)
+    let window = platform::macos::MacOSWindow::new()?;
+    Ok(browser::BrowserEngine::new(window.as_window())?)
 }
 
 /// Initialize the browser with custom configuration
 pub fn init_with_config(config: WindowConfig) -> Result<browser::BrowserEngine, Box<dyn std::error::Error>> {
-    browser::BrowserEngine::new(config)
+    let window = platform::macos::MacOSWindow::new()?;
+    Ok(browser::BrowserEngine::new(window.as_window())?)
 }
 
 #[cfg(test)]

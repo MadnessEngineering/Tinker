@@ -14,6 +14,7 @@ use wry::{WebView, WebViewBuilder};
 use tracing::{debug, info, error};
 use crate::browser::error::BrowserResult;
 use crate::browser::navigation::{NavigationManager, NavigationState};
+use crate::browser::tab_ui::TabCommand;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebViewError {
@@ -58,12 +59,22 @@ pub struct Tab {
 }
 
 impl Tab {
-    pub fn new(id: String, webview: WebView) -> Self {
-        Self {
-            id,
-            webview,
+    pub fn new(window: &Window, url: &str) -> BrowserResult<Self> {
+        let webview = WebViewBuilder::new(window)
+            .with_url(url)?
+            .build()?;
+
+        Ok(Self {
+            id: String::new(),
+            webview: Arc::new(webview),
             navigation: NavigationManager::new(),
-        }
+        })
+    }
+
+    pub fn create_tab(window: &Window, url: &str) -> BrowserResult<Self> {
+        let tab = Self::new(window, url)?;
+        tab.navigate(url)?;
+        Ok(tab)
     }
 
     /// Navigate to a URL or search query
@@ -136,31 +147,35 @@ impl Tab {
 
 /// Manages multiple browser tabs
 pub struct TabManager {
+    window: Arc<Window>,
     tabs: Arc<Mutex<Vec<Tab>>>,
     active_tab: Arc<Mutex<usize>>,
 }
 
 impl TabManager {
-    pub fn new() -> Self {
+    pub fn new(window: Window) -> Self {
         Self {
+            window: Arc::new(window),
             tabs: Arc::new(Mutex::new(Vec::new())),
             active_tab: Arc::new(Mutex::new(0)),
         }
     }
 
-    /// Create a new tab with the given WebView
-    pub fn create_tab(&self, webview: WebView) -> BrowserResult<String> {
-        let mut tabs = self.tabs.lock().map_err(|e| format!("Failed to lock tabs: {}", e))?;
-        let id = format!("tab_{}", tabs.len());
-        tabs.push(Tab::new(id.clone(), webview));
-        Ok(id)
-    }
-
     /// Get the active tab
-    pub fn active_tab(&self) -> BrowserResult<Option<Tab>> {
+    pub fn active_tab(&self) -> BrowserResult<Option<&Tab>> {
         let tabs = self.tabs.lock().map_err(|e| format!("Failed to lock tabs: {}", e))?;
         let active_tab = self.active_tab.lock().map_err(|e| format!("Failed to lock active tab: {}", e))?;
-        Ok(tabs.get(*active_tab).cloned())
+        Ok(tabs.get(*active_tab))
+    }
+
+    /// Create a new tab
+    pub fn create_tab(&self) -> BrowserResult<String> {
+        let mut tabs = self.tabs.lock().map_err(|e| format!("Failed to lock tabs: {}", e))?;
+        let id = format!("tab_{}", tabs.len());
+        
+        let tab = Tab::new(self.window.as_ref(), &id)?;
+        tabs.push(tab);
+        Ok(id)
     }
 
     /// Set the active tab by index
@@ -254,7 +269,7 @@ impl TabManager {
             .build()
             .map_err(|e| format!("Failed to create WebView: {}", e))?;
 
-        let new_tab = Tab::new(id.clone(), webview);
+        let new_tab = Tab::new(self.window.as_ref(), &id);
         
         // Navigate to the same URL if one exists
         if let Some(url) = current_url {
@@ -332,9 +347,9 @@ pub struct BrowserEngine {
 
 impl BrowserEngine {
     pub fn new(window: Window) -> BrowserResult<Self> {
-        let tab_manager = Arc::new(TabManager::new());
+        let tab_manager = Arc::new(TabManager::new(window));
         let event_viewer = Arc::new(EventViewer::new());
-        let tab_bar = Arc::new(TabBar::new());
+        let tab_bar = Arc::new(TabBar::new(&window));
 
         Ok(Self {
             window,
@@ -351,7 +366,7 @@ impl BrowserEngine {
             .with_visible(true)
             .build()?;
 
-        let tab_id = self.tab_manager.create_tab(webview)?;
+        let tab_id = self.tab_manager.create_tab()?;
         self.tab_bar.add_tab(&tab_id)?;
 
         // Navigate to URL if provided
@@ -467,28 +482,26 @@ impl BrowserEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wry::WebViewBuilder;
+    use tao::window::{Window, WindowBuilder};
 
-    fn create_test_webview() -> WebView {
-        WebViewBuilder::new()
-            .with_transparent(true)
-            .with_visible(true)
+    fn create_test_window() -> Window {
+        WindowBuilder::new()
+            .with_title("Test Window")
             .build()
-            .expect("Failed to create test WebView")
+            .expect("Failed to create test window")
     }
 
     #[test]
     fn test_tab_creation() {
-        let manager = TabManager::new();
+        let window = create_test_window();
+        let manager = TabManager::new(window);
         
         // Create first tab
-        let webview1 = create_test_webview();
-        let id1 = manager.create_tab(webview1).unwrap();
+        let id1 = manager.create_tab().unwrap();
         assert_eq!(id1, "tab_0");
         
         // Create second tab
-        let webview2 = create_test_webview();
-        let id2 = manager.create_tab(webview2).unwrap();
+        let id2 = manager.create_tab().unwrap();
         assert_eq!(id2, "tab_1");
         
         // Verify tab count
@@ -498,17 +511,13 @@ mod tests {
 
     #[test]
     fn test_tab_reordering() {
-        let manager = TabManager::new();
+        let window = create_test_window();
+        let manager = TabManager::new(window);
         
         // Create three tabs
-        let webview1 = create_test_webview();
-        let id1 = manager.create_tab(webview1).unwrap();
-        
-        let webview2 = create_test_webview();
-        let id2 = manager.create_tab(webview2).unwrap();
-        
-        let webview3 = create_test_webview();
-        let id3 = manager.create_tab(webview3).unwrap();
+        let id1 = manager.create_tab().unwrap();
+        let id2 = manager.create_tab().unwrap();
+        let id3 = manager.create_tab().unwrap();
         
         // Test moving middle tab to start
         manager.reorder_tab(1, 0).unwrap();
@@ -523,14 +532,12 @@ mod tests {
 
     #[test]
     fn test_active_tab_tracking() {
-        let manager = TabManager::new();
+        let window = create_test_window();
+        let manager = TabManager::new(window);
         
         // Create two tabs
-        let webview1 = create_test_webview();
-        let _id1 = manager.create_tab(webview1).unwrap();
-        
-        let webview2 = create_test_webview();
-        let _id2 = manager.create_tab(webview2).unwrap();
+        let _id1 = manager.create_tab().unwrap();
+        let _id2 = manager.create_tab().unwrap();
         
         // Set second tab as active
         manager.set_active_tab(1).unwrap();
@@ -543,11 +550,11 @@ mod tests {
 
     #[test]
     fn test_invalid_reordering() {
-        let manager = TabManager::new();
+        let window = create_test_window();
+        let manager = TabManager::new(window);
         
         // Create one tab
-        let webview = create_test_webview();
-        let _id = manager.create_tab(webview).unwrap();
+        let _id = manager.create_tab().unwrap();
         
         // Test invalid source index
         assert!(manager.reorder_tab(1, 0).is_err());
@@ -558,14 +565,12 @@ mod tests {
 
     #[test]
     fn test_tab_lookup() {
-        let manager = TabManager::new();
+        let window = create_test_window();
+        let manager = TabManager::new(window);
         
         // Create two tabs
-        let webview1 = create_test_webview();
-        let id1 = manager.create_tab(webview1).unwrap();
-        
-        let webview2 = create_test_webview();
-        let id2 = manager.create_tab(webview2).unwrap();
+        let id1 = manager.create_tab().unwrap();
+        let id2 = manager.create_tab().unwrap();
         
         // Test tab index lookup
         assert_eq!(manager.get_tab_index(&id1).unwrap(), Some(0));

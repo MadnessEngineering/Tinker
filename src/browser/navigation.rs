@@ -399,7 +399,7 @@ impl NavigationManager {
     /// Get the current URL
     pub fn current_url(&self) -> BrowserResult<Option<ParsedUrl>> {
         if let Some(entry) = self.history.current()? {
-            self.url_manager.parse_input(&entry.url())
+            Ok(Some(self.url_manager.parse_input(&entry.url())?))
         } else {
             Ok(None)
         }
@@ -462,7 +462,7 @@ impl NavigationManager {
     /// Get the current page for splitting
     pub fn get_current_for_split(&self) -> BrowserResult<Option<ParsedUrl>> {
         if let Some(entry) = self.history.current()? {
-            self.url_manager.parse_input(&entry.url())
+            Ok(Some(self.url_manager.parse_input(&entry.url())?))
         } else {
             Ok(None)
         }

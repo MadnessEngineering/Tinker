@@ -24,6 +24,9 @@ pub enum BrowserError {
 
     #[error("Other error: {0}")]
     Other(String),
+
+    #[error("WebView error: {0}")]
+    WebViewError(String),
 }
 
 #[derive(Debug, Error)]
@@ -87,6 +90,15 @@ pub enum StateError {
 
     #[error("State not initialized")]
     NotInitialized,
+
+    #[error("Invalid state: {0}")]
+    InvalidState(String),
+
+    #[error("Tab not found: {0}")]
+    TabNotFound(String),
+
+    #[error("Window not found: {0}")]
+    WindowNotFound(String),
 }
 
 #[derive(Debug, Error)]
@@ -117,6 +129,12 @@ impl From<String> for BrowserError {
 impl From<&str> for BrowserError {
     fn from(error: &str) -> Self {
         BrowserError::Other(error.to_string())
+    }
+}
+
+impl From<wry::Error> for BrowserError {
+    fn from(err: wry::Error) -> Self {
+        BrowserError::WebViewError(err.to_string())
     }
 }
 

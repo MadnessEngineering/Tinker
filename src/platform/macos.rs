@@ -1,9 +1,10 @@
-use super::{PlatformWindow, PlatformWebView, WindowTheme, PlatformError};
 use tao::{
-    window::{Window, WindowBuilder},
+    window::{Window, WindowBuilder, Theme},
     dpi::LogicalSize,
-    platform::macos::WindowExtMacOS,
+    platform::macos::{WindowBuilderExtMacOS, WindowExtMacOS},
 };
+
+use super::{PlatformWindow, PlatformWebView, WindowTheme, PlatformError};
 use wry::WebViewBuilder;
 
 pub struct MacOSWindow {
@@ -15,34 +16,20 @@ impl MacOSWindow {
         let window = WindowBuilder::new()
             .with_title("Tinker")
             .with_inner_size(LogicalSize::new(1024, 768))
-            .with_visible(false) // Start invisible for smoother initialization
+            .with_visible(false)
             .with_titlebar_transparent(true)
-            .with_fullsize_content_view(true)
-            .build(&tao::event_loop::EventLoop::new())
-            .map_err(|e| PlatformError::WindowCreation(e.to_string()))?;
+            .build()
+            .map_err(|e| PlatformError::WindowCreationFailed(e.to_string()))?;
 
         Ok(Self { window })
     }
 }
 
 impl PlatformWindow for MacOSWindow {
-    fn create_window(&self) -> Result<Window, Box<dyn std::error::Error>> {
-        // Clone the existing window configuration
-        let window = WindowBuilder::new()
-            .with_title("Tinker")
-            .with_inner_size(LogicalSize::new(1024, 768))
-            .with_visible(true)
-            .with_titlebar_transparent(true)
-            .with_fullsize_content_view(true)
-            .build(&tao::event_loop::EventLoop::new())?;
-
-        Ok(window)
-    }
-
     fn set_theme(&self, theme: WindowTheme) {
         match theme {
-            WindowTheme::Light => self.window.set_theme(Some(tao::window::Theme::Light)),
-            WindowTheme::Dark => self.window.set_theme(Some(tao::window::Theme::Dark)),
+            WindowTheme::Light => self.window.set_theme(Some(Theme::Light)),
+            WindowTheme::Dark => self.window.set_theme(Some(Theme::Dark)),
             WindowTheme::System => self.window.set_theme(None),
         }
     }
@@ -53,6 +40,10 @@ impl PlatformWindow for MacOSWindow {
 
     fn hide(&self) {
         self.window.set_visible(false);
+    }
+
+    fn as_window(&self) -> &Window {
+        &self.window
     }
 }
 
@@ -73,27 +64,27 @@ impl MacOSWebView {
 }
 
 impl PlatformWebView for MacOSWebView {
-    fn create_webview(&self) -> Result<wry::WebView, Box<dyn std::error::Error>> {
-        // Clone the existing webview configuration
-        let webview = WebViewBuilder::new(&self.webview.window())
-            .with_transparent(true)
-            .with_initialization_script(include_str!("../../assets/js/init.js"))
-            .build()?;
+    fn create_webview(&self, url: &str) -> Result<WebView, PlatformError> {
+        let window = self.webview.window().ok_or_else(|| {
+            PlatformError::WebViewCreation("Failed to get window from WebView".to_string())
+        })?;
 
-        Ok(webview)
+        WebViewBuilder::new(window)
+            .with_url(url)
+            .build()
+            .map_err(|e| PlatformError::WebViewCreation(e.to_string()))
     }
 
     fn set_visibility(&self, visible: bool) {
-        if let Some(window) = self.webview.window().as_window() {
+        if let Some(window) = self.webview.window() {
             window.set_visible(visible);
         }
     }
 
-    fn update_bounds(&self) {
-        if let Some(window) = self.webview.window().as_window() {
-            // Force a redraw of the WebView
-            window.set_visible(false);
-            window.set_visible(true);
+    fn update_bounds(&self, x: i32, y: i32, width: u32, height: u32) {
+        if let Some(window) = self.webview.window() {
+            window.set_outer_position(LogicalPosition::new(x, y));
+            window.set_inner_size(LogicalSize::new(width, height));
         }
     }
 }
