@@ -4,56 +4,48 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["javascriptcore"]
+default = ["webview", "native-ui"]
+full = ["webview", "native-ui", "v8", "javascriptcore", "spidermonkey"]
+
+# Core features
+webview = ["dep:wry", "dep:tao"]
+native-ui = []
+
+# JavaScript engines
 v8 = ["dep:v8"]
 javascriptcore = ["dep:javascriptcore-rs"]
 spidermonkey = ["dep:mozjs"]
-full = ["v8", "javascriptcore", "spidermonkey"]
 
 [dependencies]
-wry = { version = "0.37", features = ["transparent"] }
-tao = { version = "0.25", features = ["rwh_05"] }
-raw-window-handle = "0.5.2"
-tokio = { version = "1.35.1", features = ["full"] }
-serde = { version = "1.0.195", features = ["derive"] }
-serde_json = "1.0.111"
+# Core dependencies (always included)
 anyhow = "1.0.79"
-url = "2.5.0"
-clap = { version = "4.4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-chrono = "0.4"
-rumqttc = "0.24"
-axum = { version = "0.7", features = ["http2"] }
-tower = "0.5"
-tower-http = { version = "0.5", features = ["trace"] }
+raw-window-handle = "0.5.2"
+serde = { version = "1.0.195", features = ["derive"] }
+serde_json = "1.0.111"
 
-# Optional JavaScript engine dependencies
+# Optional dependencies based on features
+wry = { version = "0.37", features = ["transparent"], optional = true }
+tao = { version = "0.25", features = ["rwh_05"], optional = true }
 v8 = { version = "0.74", optional = true }
 javascriptcore-rs = { version = "0.14", optional = true }
 mozjs = { version = "0.10.1", optional = true }
 
+# Platform-specific dependencies
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.48", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Controls",
+    "Win32_System_LibraryLoader",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Threading",
+]}
+
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.0"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.48", features = [
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_Foundation",
-    "Win32_UI_Controls",
-    "Win32_UI_Shell",
-    "Win32_System_Threading",
-    "Win32_Graphics_Gdi",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_HiDpi",
-    "Win32_System_LibraryLoader",
-    "Win32_UI_Controls_Dialogs"
-]}
-
-[target.'cfg(target_os = "macos")'.dependencies]
-cocoa = "0.24"
-objc = "0.2"
-
-[build-dependencies]
-built = "0.7"

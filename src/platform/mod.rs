@@ -6,11 +6,24 @@ pub mod windows;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+// Re-export platform-specific types
 #[cfg(target_os = "windows")]
-pub use self::windows::{WindowsManager, WindowsWebView, WindowsConfig, WindowsTheme};
+pub use self::windows::WindowsManager;
+
+#[cfg(all(target_os = "windows", feature = "webview"))]
+pub use self::windows::WindowsWebView;
+
+#[cfg(target_os = "windows")]
+pub use self::windows::{WindowsConfig, WindowsTheme};
 
 #[cfg(target_os = "macos")]
-pub use self::macos::{MacosManager, MacosWebView, MacosConfig, MacosTheme};
+pub use self::macos::MacosManager;
+
+#[cfg(all(target_os = "macos", feature = "webview"))]
+pub use self::macos::MacosWebView;
+
+#[cfg(target_os = "macos")]
+pub use self::macos::{MacosConfig, MacosTheme};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Platform {
@@ -37,6 +50,7 @@ pub trait PlatformManager {
     fn run(&self) -> Result<()>;
 }
 
+#[cfg(feature = "webview")]
 pub trait PlatformWebView {
     fn new<T>(window: &T) -> Result<Self>
     where
