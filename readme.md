@@ -199,6 +199,41 @@ Note: The `screenshots/` directory is ignored by git to avoid committing large b
    - Escape special characters appropriately
    - Set flags to prevent interactive prompts
 
+### Issue Management
+1. Creating Issues
+   ```bash
+   # Basic issue creation
+   gh issue create --title "Issue Title" --body "Description"
+
+   # With labels (must exist in repository)
+   gh issue create --title "Issue Title" --body "Description" --label "bug" --label "help wanted"
+
+   # From template (if available)
+   gh issue create --template "bug_report.md"
+   ```
+
+2. Issue Guidelines
+   - Use clear, descriptive titles
+   - Include reproduction steps for bugs
+   - Add relevant code snippets or error messages
+   - Link related PRs or commits
+   - Use markdown formatting for readability
+   - Add appropriate labels once created
+
+3. Issue Templates
+   Located in `.github/ISSUE_TEMPLATE/`:
+   - Bug report template
+   - Feature request template
+   - Documentation improvement template
+
+4. Issue Labels
+   Standard labels:
+   - `bug`: Something isn't working
+   - `enhancement`: New feature or request
+   - `documentation`: Documentation improvements
+   - `help wanted`: Extra attention needed
+   - `good first issue`: Good for newcomers
+
 ### Lessons Learned
 - Keep platform-specific code isolated in dedicated modules
 - Use feature flags for optional functionality
