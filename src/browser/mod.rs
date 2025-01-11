@@ -331,9 +331,9 @@ impl BrowserEngine {
         debug!("Window reference stored in Arc");
 
         // Create initial tab if URL provided
-        if let Some(url) = &self.initial_url {
+        if let Some(url) = self.initial_url.clone() {
             debug!("Creating initial tab with URL: {}", url);
-            self.create_tab(url)?;
+            self.create_tab(&url)?;
         } else {
             debug!("Creating default blank tab");
             self.create_tab("about:blank")?;
@@ -346,7 +346,7 @@ impl BrowserEngine {
         window.request_redraw();
         debug!("Initial redraw requested");
 
-        event_loop.run(move |event, window_target, control_flow| {
+        event_loop.run(move |event, _window_target, control_flow| {
             *control_flow = ControlFlow::Wait;
 
             match event {
@@ -522,6 +522,16 @@ impl BrowserEngine {
                     }
                 }
             }
+            BrowserCommand::RecordEvent { event } => {
+                if let Ok(mut recorder) = self.recorder.lock() {
+                    recorder.record_event(event);
+                }
+            }
+            BrowserCommand::PlayEvent { event } => {
+                if let Ok(mut player) = self.player.lock() {
+                    player.play_event(event);
+                }
+            }
         }
         Ok(())
     }
@@ -695,7 +705,7 @@ impl BrowserEngine {
         let webview = builder
             .with_bounds(webview_bounds)
             .with_initialization_script(include_str!("../templates/window_chrome.js"))
-            .with_html(include_str!("../templates/window_chrome.html"))
+            .with_html(include_str!("../templates/window_chrome.html"))?
             .build()
             .map_err(WebViewError::InitError)?;
 

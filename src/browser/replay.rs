@@ -3,10 +3,11 @@ use std::io::{self, BufWriter, BufReader};
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 use crate::event::BrowserEvent;
+use tracing::{debug, error};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct EventRecord {
-    timestamp: u64,  // milliseconds since start
+    timestamp_ms: u64,
     event: BrowserEvent,
 }
 
@@ -20,13 +21,15 @@ pub struct EventRecorder {
 
 impl EventRecorder {
     pub fn start(&mut self) {
-        self.events.clear();
         self.start_time = Some(Instant::now());
+        self.events.clear();
         self.is_recording = true;
+        debug!("Started recording events");
     }
 
     pub fn stop(&mut self) {
         self.is_recording = false;
+        debug!("Stopped recording events");
     }
 
     pub fn set_save_path(&mut self, path: String) {
@@ -34,25 +37,23 @@ impl EventRecorder {
     }
 
     pub fn record_event(&mut self, event: BrowserEvent) {
-        if !self.is_recording {
-            return;
-        }
-
-        if let Some(start_time) = self.start_time {
-            let elapsed = start_time.elapsed();
-            let timestamp = elapsed.as_millis() as u64;
-            
-            self.events.push(EventRecord {
-                timestamp,
-                event,
-            });
+        if self.is_recording {
+            if let Some(start) = self.start_time {
+                let elapsed = start.elapsed();
+                self.events.push(EventRecord {
+                    timestamp_ms: elapsed.as_millis() as u64,
+                    event,
+                });
+                debug!("Recorded event at {:?}", elapsed);
+            }
         }
     }
 
-    pub fn save(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save(&self, path: &str) -> io::Result<()> {
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(writer, &self.events)?;
+        serde_json::to_writer(writer, &self.events)?;
+        debug!("Saved {} events to {}", self.events.len(), path);
         Ok(())
     }
 }
@@ -62,16 +63,17 @@ pub struct EventPlayer {
     events: Vec<EventRecord>,
     start_time: Option<Instant>,
     current_index: usize,
-    playback_speed: f32,
+    speed: f32,
     is_playing: bool,
 }
 
 impl EventPlayer {
-    pub fn load(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn load(&mut self, path: &str) -> io::Result<()> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         self.events = serde_json::from_reader(reader)?;
         self.current_index = 0;
+        debug!("Loaded {} events from {}", self.events.len(), path);
         Ok(())
     }
 
@@ -79,36 +81,50 @@ impl EventPlayer {
         self.start_time = Some(Instant::now());
         self.current_index = 0;
         self.is_playing = true;
+        debug!("Started event playback");
     }
 
     pub fn stop(&mut self) {
         self.is_playing = false;
+        debug!("Stopped event playback");
     }
 
     pub fn set_speed(&mut self, speed: f32) {
-        self.playback_speed = speed.max(0.1).min(10.0);
+        self.speed = speed.max(0.1).min(10.0);
+        debug!("Set playback speed to {}", speed);
     }
 
     pub fn next_event(&mut self) -> Option<BrowserEvent> {
-        if !self.is_playing || self.current_index >= self.events.len() {
+        if !self.is_playing {
             return None;
         }
 
-        if let Some(start_time) = self.start_time {
-            let current_time = start_time.elapsed();
-            let target_time = Duration::from_millis(
-                (self.events[self.current_index].timestamp as f32 / self.playback_speed) as u64
-            );
+        if let Some(start) = self.start_time {
+            if self.current_index < self.events.len() {
+                let record = &self.events[self.current_index];
+                let elapsed = start.elapsed();
+                let target_time = Duration::from_millis(
+                    (record.timestamp_ms as f32 / self.speed) as u64
+                );
 
-            if current_time >= target_time {
-                let event = self.events[self.current_index].event.clone();
-                self.current_index += 1;
-                Some(event)
+                if elapsed >= target_time {
+                    self.current_index += 1;
+                    debug!("Playing event at {:?}", elapsed);
+                    return Some(record.event.clone());
+                }
             } else {
-                None
+                self.stop();
             }
-        } else {
-            None
+        }
+        None
+    }
+
+    pub fn play_event(&mut self, event: BrowserEvent) {
+        if self.is_playing {
+            if let Some(start) = self.start_time {
+                let elapsed = start.elapsed();
+                debug!("Playing event at {:?}: {:?}", elapsed, event);
+            }
         }
     }
 } 

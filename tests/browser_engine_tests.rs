@@ -28,7 +28,58 @@ fn test_browser_navigation() {
 }
 
 #[test]
-fn test_event_publishing() {
+fn test_tab_management() {
+    let mut browser = BrowserEngine::new(false, None, None);
+
+    // Create multiple tabs
+    let tab1_id = browser.create_tab("https://example.com/1").expect("Failed to create tab 1");
+    let tab2_id = browser.create_tab("https://example.com/2").expect("Failed to create tab 2");
+
+    // Verify tabs were created
+    let tabs = browser.tabs.lock().unwrap();
+    assert_eq!(tabs.get_all_tabs().len(), 2);
+    assert_eq!(tabs.get_active_tab().unwrap().id, tab2_id);
+    drop(tabs);
+
+    // Test tab switching
+    browser.switch_to_tab(tab1_id).expect("Failed to switch tabs");
+    let tabs = browser.tabs.lock().unwrap();
+    assert_eq!(tabs.get_active_tab().unwrap().id, tab1_id);
+    drop(tabs);
+
+    // Test tab closing
+    browser.close_tab(tab2_id).expect("Failed to close tab");
+    let tabs = browser.tabs.lock().unwrap();
+    assert_eq!(tabs.get_all_tabs().len(), 1);
+    assert_eq!(tabs.get_active_tab().unwrap().id, tab1_id);
+}
+
+#[test]
+fn test_tab_error_handling() {
+    let mut browser = BrowserEngine::new(false, None, None);
+
+    // Test invalid tab operations
+    assert!(browser.switch_to_tab(999).is_err());
+    assert!(browser.close_tab(999).is_err());
+
+    // Create a tab and verify it exists
+    let tab_id = browser.create_tab("https://example.com").expect("Failed to create tab");
+    let tabs = browser.tabs.lock().unwrap();
+    assert_eq!(tabs.get_all_tabs().len(), 1);
+    assert_eq!(tabs.get_active_tab().unwrap().id, tab_id);
+    drop(tabs);
+
+    // Try to close the last tab (should fail)
+    assert!(browser.close_tab(tab_id).is_err());
+
+    // Verify tab state remains consistent
+    let tabs = browser.tabs.lock().unwrap();
+    assert_eq!(tabs.get_all_tabs().len(), 1);
+    assert_eq!(tabs.get_active_tab().unwrap().id, tab_id);
+}
+
+#[test]
+fn test_event_system() {
     // Create event system
     let mut events = EventSystem::new("localhost", "test-browser");
     events.connect().unwrap();
