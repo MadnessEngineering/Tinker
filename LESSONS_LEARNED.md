@@ -1,6 +1,7 @@
 ### Lessons Learned (Updated)
 
 #### Testing Best Practices
+- Use `DEBUG=TRUE cargo test -- --nocapture | cat` for detailed debug output
 - Avoid spawning threads in tests unless absolutely necessary
 - Use proper locking mechanisms for shared state in tests
 - Keep tests focused on single functionality
