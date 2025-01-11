@@ -1,5 +1,17 @@
 ### Lessons Learned (Updated)
 
+#### Testing Best Practices
+- Avoid spawning threads in tests unless absolutely necessary
+- Use proper locking mechanisms for shared state in tests
+- Keep tests focused on single functionality
+- Ensure proper cleanup after each test
+- Use descriptive test names that indicate what's being tested
+- Group related tests together for better organization
+- Test error cases explicitly
+- Avoid testing UI components directly in unit tests
+- Use headless mode for testing when possible
+- Ensure tests are deterministic and don't depend on timing
+
 #### Component Architecture
 - Split large managers into focused, independently borrowable components
 - Use message passing between components to avoid mutex contention
@@ -14,6 +26,9 @@
 - Use message passing instead of shared state where possible
 - Implement proper Drop traits for cleanup
 - Use dedicated channels per component to prevent blocking
+- Avoid spawning threads in tests to prevent race conditions
+- Release locks before performing operations that might need them
+- Use proper synchronization primitives in test code
 
 
 ## Lessons Learned
