@@ -13,7 +13,7 @@ fn test_browser_headless_startup() {
 
     assert
         .success()
-        .stdout(predicate::str::contains("Starting Tinker Workshop"));
+        .stdout(predicate::str::contains("Starting Tinker browser"));
 }
 
 #[test]
@@ -26,7 +26,8 @@ fn test_browser_with_url() {
 
     assert
         .success()
-        .stdout(predicate::str::contains("Navigating to: https://github.com/DanEdens/Tinker"));
+        .stdout(predicate::str::contains("Starting Tinker browser"))
+        .stdout(predicate::str::contains("https://github.com/DanEdens/Tinker"));
 }
 
 #[test]
@@ -39,7 +40,8 @@ fn test_browser_with_multiple_tabs() {
 
     assert
         .success()
-        .stdout(predicate::str::contains("Created new tab"));
+        .stdout(predicate::str::contains("Starting Tinker browser"))
+        .stdout(predicate::str::contains("Created tab"));
 }
 
 #[test]

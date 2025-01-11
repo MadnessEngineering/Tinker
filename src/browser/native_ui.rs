@@ -1,49 +1,47 @@
-use tao::window::{Window, WindowBuilder};
-use tao::dpi::LogicalSize;
-use std::sync::{Arc, Mutex};
+use tao::window::Window;
+use std::sync::Mutex;
+use anyhow::Result;
 
-pub struct NativeTabBar {
-    height: u32,
-    tabs: Arc<Mutex<Vec<TabInfo>>>,
+#[derive(Debug)]
+pub struct NativeTab {
+    pub id: usize,
+    pub title: String,
+    pub active: bool,
 }
 
-struct TabInfo {
-    id: usize,
-    title: String,
-    active: bool,
+pub struct NativeTabBar {
+    tabs: Mutex<Vec<NativeTab>>,
+    height: u32,
 }
 
 impl NativeTabBar {
-    pub fn new(parent: &Window) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(NativeTabBar {
+    pub fn new(_window: &Window) -> Result<Self> {
+        Ok(Self {
+            tabs: Mutex::new(Vec::new()),
             height: 40,
-            tabs: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
-    pub fn add_tab(&mut self, id: usize, title: &str) {
-        if let Ok(mut tabs) = self.tabs.lock() {
-            tabs.push(TabInfo {
-                id,
-                title: title.to_string(),
-                active: false,
-            });
+    pub fn add_tab(&self, id: usize, title: &str) {
+        let mut tabs = self.tabs.lock().unwrap();
+        tabs.push(NativeTab {
+            id,
+            title: title.to_string(),
+            active: false,
+        });
+    }
+
+    pub fn remove_tab(&self, id: usize) {
+        let mut tabs = self.tabs.lock().unwrap();
+        if let Some(pos) = tabs.iter().position(|tab| tab.id == id) {
+            tabs.remove(pos);
         }
     }
 
-    pub fn remove_tab(&mut self, id: usize) {
-        if let Ok(mut tabs) = self.tabs.lock() {
-            if let Some(pos) = tabs.iter().position(|tab| tab.id == id) {
-                tabs.remove(pos);
-            }
-        }
-    }
-
-    pub fn set_active_tab(&mut self, id: usize) {
-        if let Ok(mut tabs) = self.tabs.lock() {
-            for tab in tabs.iter_mut() {
-                tab.active = tab.id == id;
-            }
+    pub fn set_active_tab(&self, id: usize) {
+        let mut tabs = self.tabs.lock().unwrap();
+        for tab in tabs.iter_mut() {
+            tab.active = tab.id == id;
         }
     }
 

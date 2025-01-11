@@ -1,10 +1,10 @@
 use anyhow::Result;
 
 #[cfg(target_os = "windows")]
-mod windows;
+pub mod windows;
 
 #[cfg(target_os = "macos")]
-mod macos;
+pub mod macos;
 
 #[cfg(target_os = "windows")]
 pub use self::windows::{WindowsManager, WindowsWebView, WindowsConfig, WindowsTheme};

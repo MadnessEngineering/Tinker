@@ -1,38 +1,29 @@
-use std::fmt::Debug;
+use std::fmt;
 
-#[derive(Debug)]
-pub enum KeyCommand {
-    Back,
-    Forward,
-    Refresh,
-    NewTab,
-    CloseTab,
-    SwitchTab(usize),
-    FocusAddressBar,
-    StopLoading,
-}
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum KeyCode {
     ArrowLeft,
     ArrowRight,
     KeyT,
     KeyW,
-    KeyR,
-    KeyL,
-    Escape,
     Digit1,
-    Digit2,
-    Digit3,
-    Digit4,
-    Digit5,
-    Digit6,
-    Digit7,
-    Digit8,
     Digit9,
 }
 
-#[derive(Debug, Clone, Copy)]
+impl fmt::Display for KeyCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            KeyCode::ArrowLeft => write!(f, "ArrowLeft"),
+            KeyCode::ArrowRight => write!(f, "ArrowRight"),
+            KeyCode::KeyT => write!(f, "KeyT"),
+            KeyCode::KeyW => write!(f, "KeyW"),
+            KeyCode::Digit1 => write!(f, "Digit1"),
+            KeyCode::Digit9 => write!(f, "Digit9"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ModifiersState {
     pub alt: bool,
     pub ctrl: bool,
@@ -41,14 +32,6 @@ pub struct ModifiersState {
 }
 
 impl ModifiersState {
-    pub fn alt(&self) -> bool {
-        self.alt
-    }
-
-    pub fn control(&self) -> bool {
-        self.ctrl
-    }
-
     pub const ALT: Self = Self {
         alt: true,
         ctrl: false,
@@ -64,32 +47,23 @@ impl ModifiersState {
     };
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum KeyCommand {
+    Back,
+    Forward,
+    NewTab,
+    CloseTab,
+    SwitchTab(usize),
+}
+
 pub fn handle_keyboard_input(key: KeyCode, modifiers: ModifiersState) -> Option<KeyCommand> {
-    match (key, modifiers.alt(), modifiers.control()) {
-        // Navigation
-        (KeyCode::ArrowLeft, true, false) => Some(KeyCommand::Back),
-        (KeyCode::ArrowRight, true, false) => Some(KeyCommand::Forward),
-        
-        // Tab Management
-        (KeyCode::KeyT, false, true) => Some(KeyCommand::NewTab),
-        (KeyCode::KeyW, false, true) => Some(KeyCommand::CloseTab),
-        
-        // Numbers 1-9 for tab switching
-        (KeyCode::Digit1, false, true) => Some(KeyCommand::SwitchTab(0)),
-        (KeyCode::Digit2, false, true) => Some(KeyCommand::SwitchTab(1)),
-        (KeyCode::Digit3, false, true) => Some(KeyCommand::SwitchTab(2)),
-        (KeyCode::Digit4, false, true) => Some(KeyCommand::SwitchTab(3)),
-        (KeyCode::Digit5, false, true) => Some(KeyCommand::SwitchTab(4)),
-        (KeyCode::Digit6, false, true) => Some(KeyCommand::SwitchTab(5)),
-        (KeyCode::Digit7, false, true) => Some(KeyCommand::SwitchTab(6)),
-        (KeyCode::Digit8, false, true) => Some(KeyCommand::SwitchTab(7)),
-        (KeyCode::Digit9, false, true) => Some(KeyCommand::SwitchTab(8)),
-        
-        // Page Controls
-        (KeyCode::KeyR, false, true) => Some(KeyCommand::Refresh),
-        (KeyCode::KeyL, false, true) => Some(KeyCommand::FocusAddressBar),
-        (KeyCode::Escape, false, false) => Some(KeyCommand::StopLoading),
-        
+    match (key, modifiers) {
+        (KeyCode::ArrowLeft, m) if m.alt => Some(KeyCommand::Back),
+        (KeyCode::ArrowRight, m) if m.alt => Some(KeyCommand::Forward),
+        (KeyCode::KeyT, m) if m.ctrl => Some(KeyCommand::NewTab),
+        (KeyCode::KeyW, m) if m.ctrl => Some(KeyCommand::CloseTab),
+        (KeyCode::Digit1, m) if m.ctrl => Some(KeyCommand::SwitchTab(0)),
+        (KeyCode::Digit9, m) if m.ctrl => Some(KeyCommand::SwitchTab(8)),
         _ => None,
     }
 }

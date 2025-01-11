@@ -1,12 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
-use tracing::{debug, error, info};
+use tracing::{info};
 use tracing_subscriber::EnvFilter;
 
 mod browser;
 mod platform;
 
-use browser::Browser;
+use browser::BrowserEngine;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -38,14 +38,8 @@ fn main() -> Result<()> {
         .init();
 
     info!("Starting Tinker browser...");
-    debug!("Debug mode: {}", args.debug);
 
     // Create and run browser
-    let mut browser = Browser::new("Tinker")?;
-    if let Some(url) = args.url {
-        browser = browser.with_url(url);
-    }
-    browser.run()?;
-
-    Ok(())
+    let browser = BrowserEngine::new(args.headless, None, args.url)?;
+    browser.run()
 }
