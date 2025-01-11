@@ -169,3 +169,39 @@ Located in `tools/capture.ps1`, this PowerShell script helps capture screenshots
 Screenshots are saved to the `screenshots/` directory in PNG format. The directory is automatically created if it doesn't exist.
 
 Note: The `screenshots/` directory is ignored by git to avoid committing large binary files.
+
+## Development Guidelines
+
+### Git Workflow
+1. Branch Strategy
+   - Use trunk-based development with feature branches
+   - Branch naming: `feat/`, `fix/`, `docs/`, `refactor/` prefixes
+   - Keep branches short-lived and focused
+
+2. Commit Guidelines
+   - Write detailed commit messages for future debugging reference
+   - Include ticket/issue numbers when applicable
+   - Use semantic commit types (feat, fix, docs, etc.)
+   - Keep commits atomic and focused
+
+3. Platform-Specific Notes
+   Windows:
+   - Use `git --no-pager` for commands that might trigger a pager
+   - Example: `git --no-pager log`, `git --no-pager diff`
+   
+   Unix/Linux/MacOS:
+   - Append `| cat` to commands that might trigger a pager
+   - Example: `git log | cat`, `git diff | cat`
+
+4. Command Execution
+   - Avoid newlines in command strings
+   - Use semicolons or && for multiple commands
+   - Escape special characters appropriately
+   - Set flags to prevent interactive prompts
+
+### Lessons Learned
+- Keep platform-specific code isolated in dedicated modules
+- Use feature flags for optional functionality
+- Maintain comprehensive error handling
+- Document API changes and breaking changes
+- Test across different platforms before merging
