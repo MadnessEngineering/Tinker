@@ -45,4 +45,13 @@ pub trait PlatformWebView {
     fn navigate(&self, url: &str) -> Result<()>;
     fn evaluate_script(&self, script: &str) -> Result<()>;
     fn resize(&self, width: i32, height: i32);
+    
+    fn set_theme(&self, theme: &str) -> Result<()>;
+    fn set_title(&self, title: &str) -> Result<()>;
+    fn set_visible(&self, visible: bool) -> Result<()>;
+    fn get_position(&self) -> Result<(i32, i32)>;
+    fn set_position(&self, x: i32, y: i32) -> Result<()>;
+    fn handle_platform_message(&self, message: &str) -> Result<()>;
+    fn is_visible(&self) -> bool;
+    fn get_parent_window(&self) -> Option<&dyn raw_window_handle::HasRawWindowHandle>;
 } 

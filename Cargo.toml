@@ -3,6 +3,13 @@ name = "tinker"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["v8"]
+v8 = []
+javascriptcore = []
+spidermonkey = []
+full = ["v8", "javascriptcore", "spidermonkey"]
+
 [dependencies]
 wry = { version = "0.37", features = ["transparent"] }
 tao = { version = "0.25", features = ["rwh_05"] }
@@ -42,3 +49,16 @@ windows = { version = "0.48", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.24"
 objc = "0.2"
+
+# Optional JavaScript engine dependencies
+[target.'cfg(feature = "v8")'.dependencies]
+v8 = "0.74"
+
+[target.'cfg(feature = "javascriptcore")'.dependencies]
+javascriptcore-rs = "0.14"
+
+[target.'cfg(feature = "spidermonkey")'.dependencies]
+mozjs = "0.14"
+
+[build-dependencies]
+built = "0.7"
