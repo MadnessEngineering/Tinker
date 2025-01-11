@@ -2,51 +2,112 @@
 
 A Madness engineered browser built for tinkerers and test enthusiasts. Tinker treats web testing as a craft, combining precision mechanics with MQTT-based event handling to create the ultimate testing workbench.
 
-## The Blueprint
+## Features
 
-Born in a workshop of web innovation, Tinker aims to reimagine browser testing through ingenious engineering. By building testing capabilities directly into the browser's machinery, we provide craftspeople with the tools they need for reliable, observable, and controllable web testing.
-
-## Workshop Tools
+### Core Features
 - 🔧 MQTT-powered Control Mechanisms
-- 🛠️ Universal Workbench API as primary interface
+- 🛠️ Universal Workbench API
 - 📊 Built-in Diagnostic Dashboard
-- 🔍 Test Blueprint Management, Pluginable
-- 🔄 Customizable Session Versioning and Comparison
-- 🔄 Reproducible Testing Patterns and replay tooling
+- 🔍 Test Blueprint Management
+- 🔄 Session Recording and Replay
 - 🎯 Precision Event Engineering
 
-## Machine Architecture
+### Platform Support
+- 🪟 Windows
+  - Native window decorations
+  - DPI awareness
+  - Theme integration
+  - Custom chrome
+- 🍎 MacOS (Coming Soon)
+  - Native controls
+  - Touch bar support
+  - System integrations
 
-### Core Machinery
-1. Browser Engine Room
-   - Custom WebView Forge
-   - Event Capture & Replay Mechanisms
-   - MQTT Control Panel Integration
+### JavaScript Engines
+- V8 (Default)
+- JavaScriptCore (Optional)
+- SpiderMonkey (Optional)
 
-2. Testing Workbench
-   - Remote Control Interface
-   - Test Assembly Line
-   - Quality Assurance Tools
-   - Visual Inspection System
+## Architecture
 
-3. Event Workshop
-   - MQTT Signal Tower
-   - Event Blueprint System
-   - Replay Engineering
-   - Timing Calibration Tools
+### Core Components
+1. Browser Engine
+   - WebView Management
+   - Tab Control System
+   - Event Handling
+   - State Management
 
-4. Reporting Laboratory
-   - Results Fabrication
-   - Blueprint Generation
-   - Metrics Workshop
-   - Video Engineering Station
+2. Platform Layer
+   - Abstract platform traits
+   - Native window management
+   - Theme integration
+   - Platform-specific optimizations
+
+3. JavaScript Integration
+   - Pluggable engine system
+   - Common interface
+   - Memory management
+   - Hook system
+
+4. Event System
+   - MQTT integration
+   - Event recording
+   - State synchronization
+   - Diagnostic tools
 
 ## Quick Start
-- 🔧 Clone the repository
-- 🛠️ Run `cargo build`
-- 🚀 Start with `cargo run -- --url https://example.com`
 
-See [Getting Started Guide](docs/getting-started.md) for detailed setup.
+### Installation
+```bash
+# Clone the repository
+git clone https://github.com/DanEdens/Tinker.git
+cd Tinker
+
+# Build with default features (V8 engine)
+cargo build
+
+# Build with all JavaScript engines
+cargo build --features full
+
+# Build with specific engine
+cargo build --features javascriptcore
+```
+
+### Running
+```bash
+# Start with default URL
+cargo run -- --url https://example.com
+
+# Start in headless mode
+cargo run -- --headless
+
+# Start with debugging
+cargo run -- --debug
+```
+
+## Configuration
+
+### JavaScript Engine Selection
+Select your preferred JavaScript engine through feature flags:
+```toml
+[dependencies]
+tinker = { version = "0.1", features = ["v8"] }        # Use V8 (default)
+tinker = { version = "0.1", features = ["full"] }      # All engines
+tinker = { version = "0.1", features = ["spidermonkey"] } # SpiderMonkey only
+```
+
+### Platform-Specific Settings
+Windows:
+```rust
+use tinker::{WindowsConfig, WindowsTheme};
+
+let config = WindowsConfig {
+    title: "My Browser".to_string(),
+    theme: WindowsTheme::Dark,
+    dpi_aware: true,
+    ..Default::default()
+};
+```
 
 ## Documentation
 - [Contributing](CONTRIBUTING.md) - Join the guild! Includes detailed architecture guide

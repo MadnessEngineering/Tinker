@@ -15,6 +15,31 @@
 - Implement proper Drop traits for cleanup
 - Use dedicated channels per component to prevent blocking
 
+### Platform Abstraction
+- Platform-specific code should be isolated through trait implementations
+- Common functionality should be shared through platform-agnostic traits
+- Feature flags help manage optional platform-specific features
+- Window management requires careful platform-specific handling
+- Theme support should be implemented at the platform level
+- Platform-specific messages should be handled through a common interface
+
+### JavaScript Engine Integration
+- Multiple engine support requires careful abstraction
+- Engine initialization should be lazy and configurable
+- Feature flags help manage optional engine dependencies
+- Common interface should be simple but extensible
+- Error handling should be consistent across engines
+- Memory management varies between engines
+- Hook system allows for custom functionality
+
+### Code Organization
+- Clear module boundaries improve maintainability
+- Re-exports should be carefully managed for public API
+- Feature flags should be used for optional components
+- Builder pattern helps with complex initialization
+- Default implementations reduce boilerplate
+- Version information should be accessible at runtime
+- Configuration should be platform-aware
 
 ## Lessons Learned
 
@@ -61,13 +86,6 @@
 - Error handling should be comprehensive and user-friendly
 - Event handlers should be properly scoped and cleaned up
 - Event propagation should be predictable and traceable
-
-### Code Organization
-- Avoid circular dependencies by keeping related types in the same module
-- Place commands and events together when they share common data structures
-- Use public helper methods to encapsulate common state checks
-- Keep template files in a dedicated directory with clear naming
-- Maintain clear separation between UI and business logic
 
 ### Error Handling
 - Convert WebView errors to String for consistent error handling

@@ -1,13 +1,17 @@
-fn main() {
-    #[cfg(target_os = "windows")]
-    {
-        println!("cargo:rustc-link-lib=dylib=user32");
-        println!("cargo:rustc-link-lib=dylib=webview2loader");
-    }
+use std::process::Command;
 
-    #[cfg(target_os = "macos")]
-    {
-        println!("cargo:rustc-link-lib=framework=Cocoa");
-        println!("cargo:rustc-link-lib=framework=WebKit");
-    }
+fn main() {
+    // Get git hash
+    let git_hash = Command::new("git")
+        .args(&["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // Pass git hash to the compiler
+    println!("cargo:rustc-env=GIT_HASH={}", git_hash);
+
+    // Tell cargo to rerun this script only if the .git/HEAD file changes
+    println!("cargo:rerun-if-changed=.git/HEAD");
 } 
