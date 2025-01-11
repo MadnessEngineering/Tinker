@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use tao::window::{Window, WindowBuilder};
 use wry::WebView;
+use wry::WebViewBuilder;
 
 use crate::platform::windows::{WindowsConfig, WindowsManager};
 use self::event::EventSystem;
@@ -22,10 +23,11 @@ pub struct BrowserEngine {
 }
 
 impl BrowserEngine {
-    pub fn new(_headless: bool, events: Option<Arc<Mutex<EventSystem>>>, _initial_url: Option<String>) -> Result<Self> {
+    pub fn new(headless: bool, events: Option<Arc<Mutex<EventSystem>>>, initial_url: Option<String>) -> Result<Self> {
         let event_loop = tao::event_loop::EventLoop::new();
         let window = WindowBuilder::new()
             .with_title("Tinker")
+            .with_visible(!headless)
             .build(&event_loop)?;
 
         #[cfg(target_os = "windows")]
@@ -40,10 +42,27 @@ impl BrowserEngine {
             let _manager = WindowsManager::new(config)?;
         }
 
+        // Initialize WebView with initial URL
+        let webview = if let Some(url) = initial_url.clone() {
+            let webview = WebViewBuilder::new(&window)
+                .with_url(&url)
+                .build()?;
+            Some(webview)
+        } else {
+            None
+        };
+
+        // Notify event system of navigation if URL provided
+        if let (Some(url), Some(events)) = (initial_url, &events) {
+            if let Ok(mut events) = events.lock() {
+                let _ = events.publish(event::BrowserEvent::Navigation { url });
+            }
+        }
+
         Ok(Self {
             event_loop,
             window,
-            webview: None,
+            webview,
             events,
         })
     }

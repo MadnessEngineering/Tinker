@@ -1,5 +1,5 @@
 use std::env;
-use tinker::event::{EventSystem, BrowserEvent};
+use tinker::browser::event::{EventSystem, BrowserEvent};
 
 fn setup() {
     env::set_var("TINKER_TEST_MODE", "1");

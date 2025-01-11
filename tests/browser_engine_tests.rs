@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use tinker::{
     browser::BrowserEngine,
-    event::EventSystem,
+    browser::event::EventSystem,
 };
 
 #[test]

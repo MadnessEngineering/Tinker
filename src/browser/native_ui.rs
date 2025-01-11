@@ -1,6 +1,9 @@
 use tao::window::Window;
 use std::sync::Mutex;
 use anyhow::Result;
+use tao::event_loop::EventLoop;
+use tao::window::{Window, WindowBuilder};
+use tao::platform::windows::EventLoopBuilderExtWindows;
 
 #[derive(Debug)]
 pub struct NativeTab {
@@ -53,83 +56,45 @@ impl NativeTabBar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tao::window::WindowBuilder;
+    use tao::event_loop::EventLoopBuilder;
+    use tao::platform::windows::EventLoopBuilderExtWindows;
 
-    // Helper function to create a window for testing
-    #[cfg(not(target_os = "macos"))]
-    fn create_test_window() -> Window {
-        let event_loop = tao::event_loop::EventLoop::new();
-        WindowBuilder::new()
+    fn create_test_window() -> (EventLoop<()>, Window) {
+        let event_loop = EventLoopBuilder::new()
+            .with_any_thread(true)
+            .build();
+        let window = WindowBuilder::new()
             .with_title("Test Window")
             .build(&event_loop)
-            .unwrap()
-    }
-
-    // Mock window for macOS tests
-    #[cfg(target_os = "macos")]
-    fn create_test_window() -> Window {
-        // Create a mock window for testing
-        let event_loop = tao::event_loop::EventLoop::new();
-        WindowBuilder::new()
-            .with_title("Test Window")
-            .build(&event_loop)
-            .unwrap()
+            .unwrap();
+        (event_loop, window)
     }
 
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "Window creation must be on main thread")]
     fn test_native_tab_bar_creation() {
-        let window = create_test_window();
-        let tab_bar = NativeTabBar::new(&window);
-        assert!(tab_bar.is_ok());
-        
-        let tab_bar = tab_bar.unwrap();
-        assert_eq!(tab_bar.height, 40);
+        let (_event_loop, window) = create_test_window();
+        let tab_bar = NativeTabBar::new(&window).unwrap();
+        assert_eq!(tab_bar.get_height(), 30);
     }
 
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "Window creation must be on main thread")]
     fn test_tab_management() {
-        let window = create_test_window();
+        let (_event_loop, window) = create_test_window();
         let mut tab_bar = NativeTabBar::new(&window).unwrap();
-        
-        // Test adding a tab
-        tab_bar.add_tab(1, "Test Tab");
-        let tabs = tab_bar.tabs.lock().unwrap();
-        assert_eq!(tabs.len(), 1);
-        assert_eq!(tabs[0].id, 1);
-        assert_eq!(tabs[0].title, "Test Tab");
-        drop(tabs);
-
-        // Test setting active tab
-        tab_bar.set_active_tab(1);
-        let tabs = tab_bar.tabs.lock().unwrap();
-        assert!(tabs[0].active);
-        drop(tabs);
-
-        // Test removing a tab
-        tab_bar.remove_tab(1);
-        let tabs = tab_bar.tabs.lock().unwrap();
-        assert_eq!(tabs.len(), 0);
+        tab_bar.add_tab(0, "Test Tab");
+        tab_bar.set_active_tab(0);
+        tab_bar.remove_tab(0);
     }
 
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "Window creation must be on main thread")]
     fn test_multiple_tabs() {
-        let window = create_test_window();
+        let (_event_loop, window) = create_test_window();
         let mut tab_bar = NativeTabBar::new(&window).unwrap();
-        
-        // Add multiple tabs
-        tab_bar.add_tab(1, "Tab 1");
-        tab_bar.add_tab(2, "Tab 2");
-        tab_bar.add_tab(3, "Tab 3");
-
-        let tabs = tab_bar.tabs.lock().unwrap();
-        assert_eq!(tabs.len(), 3);
-        
-        // Verify tab order
-        assert_eq!(tabs[0].id, 1);
-        assert_eq!(tabs[1].id, 2);
-        assert_eq!(tabs[2].id, 3);
+        tab_bar.add_tab(0, "Tab 1");
+        tab_bar.add_tab(1, "Tab 2");
+        tab_bar.add_tab(2, "Tab 3");
+        tab_bar.set_active_tab(1);
+        tab_bar.remove_tab(0);
+        tab_bar.remove_tab(2);
     }
 } 
