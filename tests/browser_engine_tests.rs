@@ -6,7 +6,7 @@ use tinker::{
 
 #[test]
 fn test_browser_navigation() {
-    let mut browser = BrowserEngine::new(false, None);
+    let mut browser = BrowserEngine::new(false, None, None);
 
     // Create initial tab and get its URL
     let initial_url = {
@@ -35,7 +35,7 @@ fn test_event_publishing() {
     let events = Arc::new(Mutex::new(events));
 
     // Create browser with events enabled
-    let mut browser = BrowserEngine::new(false, Some(events));
+    let mut browser = BrowserEngine::new(false, Some(events), None);
 
     // Test tab creation events
     let tab_id = browser.create_tab("https://example.com").unwrap();
@@ -52,7 +52,7 @@ fn test_event_publishing() {
 
 #[test]
 fn test_event_replay() {
-    let mut browser = BrowserEngine::new(false, None);
+    let mut browser = BrowserEngine::new(false, None, None);
     
     // Create a tab and verify it's created
     let tab_id = browser.create_tab("https://example.com").unwrap();
