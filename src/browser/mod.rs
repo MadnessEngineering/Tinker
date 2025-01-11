@@ -6,8 +6,7 @@ pub mod tab_ui;
 use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use tracing::{debug, error, info};
-use tao::window::{Window, WindowBuilder};
-use tao::event_loop::{EventLoop, EventLoopWindowTarget};
+use tao::event_loop::{ControlFlow, Event, EventLoop};
 
 use crate::event::EventSystem;
 use self::tabs::TabManager;
@@ -23,7 +22,6 @@ pub struct BrowserEngine {
     window_manager: WindowsManager,
     tab_manager: TabManager,
     events: Option<Arc<Mutex<EventSystem>>>,
-    event_loop: EventLoop<()>,
 }
 
 impl BrowserEngine {
@@ -32,8 +30,6 @@ impl BrowserEngine {
         events: Option<Arc<Mutex<EventSystem>>>,
         initial_url: Option<String>,
     ) -> Result<Self> {
-        let event_loop = EventLoop::new()?;
-
         #[cfg(target_os = "windows")]
         let window_manager = {
             let config = WindowsConfig {
@@ -47,11 +43,14 @@ impl BrowserEngine {
         };
 
         #[cfg(not(target_os = "windows"))]
-        let window = WindowBuilder::new()
-            .with_title("Tinker")
-            .with_decorations(!headless)
-            .with_transparent(true)
-            .build(&event_loop)?;
+        let window = {
+            let event_loop = EventLoop::new();
+            WindowBuilder::new()
+                .with_title("Tinker")
+                .with_decorations(!headless)
+                .with_transparent(true)
+                .build(&event_loop)?
+        };
 
         let tab_manager = TabManager::new();
 
@@ -62,7 +61,6 @@ impl BrowserEngine {
             window,
             tab_manager,
             events,
-            event_loop,
         })
     }
 
@@ -105,9 +103,17 @@ impl BrowserEngine {
 
         #[cfg(not(target_os = "windows"))]
         {
-            self.event_loop.run(move |event, _, control_flow| {
-                // Handle events
-            })?;
+            let event_loop = EventLoop::new();
+            event_loop.run(move |event, _, control_flow| {
+                *control_flow = ControlFlow::Wait;
+
+                match event {
+                    Event::WindowEvent { event, .. } => {
+                        // Handle window events
+                    }
+                    _ => (),
+                }
+            });
         }
 
         Ok(())
