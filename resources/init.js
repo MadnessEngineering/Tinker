@@ -1,231 +1,88 @@
-// Tinker Browser UI Initialization
-(function() {
-    // Constants
-    const TOOLBAR_HEIGHT = 40;
-    const TAB_HEIGHT = 32;
-    
-    // Styles
-    const styles = `
-        :root {
-            --toolbar-height: ${TOOLBAR_HEIGHT}px;
-            --tab-height: ${TAB_HEIGHT}px;
-            --primary-color: #2b2b2b;
-            --secondary-color: #3c3c3c;
-            --text-color: #e0e0e0;
-            --border-color: #505050;
-            --hover-color: #505050;
-            --active-color: #707070;
-        }
+// Initialize UI with dark theme and modern controls
+document.body.style.margin = '0';
+document.body.style.padding = '0';
+document.body.style.backgroundColor = '#1e1e1e';
+document.body.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif';
 
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: var(--primary-color);
-            color: var(--text-color);
-            overflow: hidden;
-        }
+// Create toolbar
+const toolbar = document.createElement('div');
+toolbar.style.cssText = `
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: #2d2d2d;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 10px;
+  border-bottom: 1px solid #3d3d3d;
+`;
 
-        #toolbar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: var(--toolbar-height);
-            background: var(--primary-color);
-            border-bottom: 1px solid var(--border-color);
-            display: flex;
-            align-items: center;
-            padding: 0 8px;
-            z-index: 1000;
-        }
+// Navigation buttons
+const createButton = (text, onClick) => {
+  const button = document.createElement('button');
+  button.textContent = text;
+  button.style.cssText = `
+    background: #3d3d3d;
+    border: none;
+    color: #fff;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+  `;
+  button.onclick = onClick;
+  return button;
+};
 
-        #tab-bar {
-            height: var(--tab-height);
-            background: var(--secondary-color);
-            display: flex;
-            align-items: center;
-            padding: 0 4px;
-            overflow-x: auto;
-            scrollbar-width: none;
-        }
+toolbar.appendChild(createButton('←', () => window.history.back()));
+toolbar.appendChild(createButton('→', () => window.history.forward()));
+toolbar.appendChild(createButton('⟳', () => window.location.reload()));
 
-        #tab-bar::-webkit-scrollbar {
-            display: none;
-        }
+// URL bar
+const urlBar = document.createElement('input');
+urlBar.type = 'text';
+urlBar.value = window.location.href;
+urlBar.style.cssText = `
+  flex: 1;
+  background: #1e1e1e;
+  border: 1px solid #3d3d3d;
+  color: #fff;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 14px;
+`;
+urlBar.onkeydown = (e) => {
+  if (e.key === 'Enter') {
+    window.location.href = urlBar.value;
+  }
+};
+toolbar.appendChild(urlBar);
 
-        .tab {
-            height: calc(var(--tab-height) - 4px);
-            min-width: 120px;
-            max-width: 200px;
-            display: flex;
-            align-items: center;
-            padding: 0 12px;
-            margin: 0 2px;
-            border-radius: 4px;
-            background: var(--primary-color);
-            cursor: pointer;
-            user-select: none;
-            transition: background 0.2s;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
+// Content container
+const content = document.createElement('div');
+content.style.cssText = `
+  margin-top: 40px;
+  height: calc(100vh - 40px);
+  overflow: auto;
+`;
 
-        .tab:hover {
-            background: var(--hover-color);
-        }
+// Move all body content to container
+while (document.body.firstChild) {
+  content.appendChild(document.body.firstChild);
+}
 
-        .tab.active {
-            background: var(--active-color);
-        }
+document.body.appendChild(toolbar);
+document.body.appendChild(content);
 
-        .tab-close {
-            margin-left: 8px;
-            padding: 2px;
-            border-radius: 50%;
-            opacity: 0.7;
-            transition: opacity 0.2s;
-        }
-
-        .tab-close:hover {
-            opacity: 1;
-            background: rgba(255, 255, 255, 0.1);
-        }
-
-        #nav-controls {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 0 12px;
-        }
-
-        .nav-button {
-            padding: 6px;
-            border-radius: 4px;
-            background: transparent;
-            border: none;
-            color: var(--text-color);
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-
-        .nav-button:hover {
-            background: var(--hover-color);
-        }
-
-        .nav-button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        #url-bar {
-            flex: 1;
-            height: 28px;
-            margin: 0 12px;
-            padding: 0 8px;
-            background: var(--secondary-color);
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            color: var(--text-color);
-            font-size: 14px;
-        }
-
-        #url-bar:focus {
-            outline: none;
-            border-color: var(--active-color);
-        }
-
-        #content {
-            position: fixed;
-            top: var(--toolbar-height);
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: white;
-        }
-    `;
-
-    // Create and inject styles
-    const styleSheet = document.createElement('style');
-    styleSheet.textContent = styles;
-    document.head.appendChild(styleSheet);
-
-    // Create toolbar structure
-    const toolbar = document.createElement('div');
-    toolbar.id = 'toolbar';
-    toolbar.innerHTML = `
-        <div id="tab-bar"></div>
-        <div id="nav-controls">
-            <button class="nav-button" id="back-button">←</button>
-            <button class="nav-button" id="forward-button">→</button>
-            <button class="nav-button" id="refresh-button">↻</button>
-        </div>
-        <input type="text" id="url-bar" placeholder="Enter URL">
-        <div id="menu-controls">
-            <button class="nav-button" id="menu-button">☰</button>
-        </div>
-    `;
-    document.body.appendChild(toolbar);
-
-    // Create content container
-    const content = document.createElement('div');
-    content.id = 'content';
-    document.body.appendChild(content);
-
-    // Initialize event listeners
-    document.getElementById('back-button').addEventListener('click', () => {
-        window.history.back();
-    });
-
-    document.getElementById('forward-button').addEventListener('click', () => {
-        window.history.forward();
-    });
-
-    document.getElementById('refresh-button').addEventListener('click', () => {
-        window.location.reload();
-    });
-
-    const urlBar = document.getElementById('url-bar');
-    urlBar.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            const url = urlBar.value;
-            if (url) {
-                window.location.href = url.includes('://') ? url : `https://${url}`;
-            }
-        }
-    });
-
-    // Update URL bar when location changes
-    const updateUrlBar = () => {
-        urlBar.value = window.location.href;
-    };
-    window.addEventListener('load', updateUrlBar);
-    window.addEventListener('popstate', updateUrlBar);
-
-    // Export API for native code
-    window.tinkerAPI = {
-        updateToolbarHeight: (height) => {
-            document.documentElement.style.setProperty('--toolbar-height', `${height}px`);
-        },
-        addTab: (id, title, isActive) => {
-            const tab = document.createElement('div');
-            tab.className = `tab${isActive ? ' active' : ''}`;
-            tab.dataset.id = id;
-            tab.innerHTML = `
-                <span class="tab-title">${title || 'New Tab'}</span>
-                <span class="tab-close">×</span>
-            `;
-            document.getElementById('tab-bar').appendChild(tab);
-        },
-        removeTab: (id) => {
-            const tab = document.querySelector(`.tab[data-id="${id}"]`);
-            if (tab) tab.remove();
-        },
-        activateTab: (id) => {
-            document.querySelectorAll('.tab').forEach(tab => {
-                tab.classList.toggle('active', tab.dataset.id === id);
-            });
-        }
-    };
-})(); 
+// Export API for native code
+window.tinker = {
+  updateUrl: (url) => {
+    urlBar.value = url;
+  },
+  updateTitle: (title) => {
+    document.title = title;
+  }
+}; 

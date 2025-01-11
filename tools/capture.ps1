@@ -1,11 +1,7 @@
-# Screenshot capture utility for Tinker development
+# Screenshot capture script using Greenshot
 param(
-    [Parameter(Mandatory=$false)]
-    [ValidateSet('window', 'region', 'full')]
-    [string]$type = 'window',
-    
-    [Parameter(Mandatory=$false)]
-    [string]$name = (Get-Date -Format "yyyy-MM-dd-HH-mm-ss")
+    [string]$type = "window", # window, region, or full
+    [string]$name = "screenshot"
 )
 
 $greenshotPath = "C:\Program Files\Greenshot\Greenshot.exe"
@@ -19,28 +15,24 @@ if (-not (Test-Path $greenshotPath)) {
 
 # Create screenshots directory if it doesn't exist
 if (-not (Test-Path $screenshotsDir)) {
-    New-Item -ItemType Directory -Path $screenshotsDir | Out-Null
+    New-Item -ItemType Directory -Path $screenshotsDir
 }
-
-# Build the screenshot path
-$screenshotPath = Join-Path $screenshotsDir "$name.png"
 
 # Capture screenshot based on type
 switch ($type) {
-    'window' {
-        Start-Process -FilePath $greenshotPath -ArgumentList "/capture=window /savepath=$screenshotPath" -Wait
+    "window" {
+        & $greenshotPath --window --output "$screenshotsDir\$name.png"
     }
-    'region' {
-        Start-Process -FilePath $greenshotPath -ArgumentList "/capture=region /savepath=$screenshotPath" -Wait
+    "region" {
+        & $greenshotPath --region --output "$screenshotsDir\$name.png"
     }
-    'full' {
-        Start-Process -FilePath $greenshotPath -ArgumentList "/capture=screen /savepath=$screenshotPath" -Wait
+    "full" {
+        & $greenshotPath --fullscreen --output "$screenshotsDir\$name.png"
+    }
+    default {
+        Write-Error "Invalid type. Use 'window', 'region', or 'full'"
+        exit 1
     }
 }
 
-if (Test-Path $screenshotPath) {
-    Write-Host "Screenshot saved to: $screenshotPath"
-} else {
-    Write-Error "Failed to save screenshot"
-    exit 1
-} 
+Write-Host "Screenshot saved to $screenshotsDir\$name.png" 

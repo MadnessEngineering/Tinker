@@ -1,23 +1,10 @@
-use anyhow::{Result, anyhow};
-use windows::Win32::{
-    UI::{
-        WindowsAndMessaging::{
-            self, CreateWindowExW, DefWindowProcW, DispatchMessageW,
-            GetMessageW, PostQuitMessage, RegisterClassExW, ShowWindow,
-            WNDCLASSEXW, WS_OVERLAPPEDWINDOW, WS_POPUP, CW_USEDEFAULT,
-            SW_SHOW, WM_DESTROY, WM_SIZE, MSG, TranslateMessage,
-        },
-        Controls::{
-            self, TCM_INSERTITEMW, TCM_DELETEITEM, TCM_SETCURSEL,
-            TCITEMW, WC_TABCONTROL,
-        },
-        HiDpi::{SetProcessDpiAwareness, PROCESS_DPI_AWARENESS, PROCESS_PER_MONITOR_DPI_AWARE},
-    },
-    Foundation::{HWND, LPARAM, WPARAM, LRESULT},
-    Graphics::Gdi::UpdateWindow,
-    System::LibraryLoader::GetModuleHandleW,
-};
+use windows::Win32::UI::{Controls, WindowsAndMessaging};
+use windows::Win32::Foundation::{HWND, RECT, LPARAM, WPARAM, LRESULT, GetLastError};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC};
+use windows::Win32::UI::HiDpi::SetProcessDpiAwareness;
 use windows::core::{PCWSTR, PWSTR, w};
+use anyhow::{Result, anyhow};
 use tracing::debug;
 use super::config::WindowsConfig;
 use crate::platform::PlatformManager;
@@ -30,88 +17,56 @@ pub struct WindowsManager {
 
 impl WindowsManager {
     pub fn new(config: WindowsConfig) -> Result<Self> {
-        // Register window class
-        let class_name = w!("TinkerBrowser");
-        let wc = WNDCLASSEXW {
-            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: WindowsAndMessaging::CS_HREDRAW | WindowsAndMessaging::CS_VREDRAW,
-            lpfnWndProc: Some(Self::wndproc),
-            hInstance: unsafe { GetModuleHandleW(None)? },
-            lpszClassName: class_name,
-            ..Default::default()
-        };
-
         unsafe {
-            RegisterClassExW(&wc);
-        }
-
-        // Create main window
-        let title = format!("{}\0", config.title);
-        let hwnd = unsafe {
-            CreateWindowExW(
-                Default::default(),
-                class_name,
-                PCWSTR(title.encode_utf16().collect::<Vec<_>>().as_ptr()),
-                if config.decorations {
-                    WS_OVERLAPPEDWINDOW
-                } else {
-                    WS_POPUP
-                },
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                config.width as i32,
-                config.height as i32,
-                None,
-                None,
-                wc.hInstance,
-                None,
-            )
-        };
-
-        if hwnd.0 == 0 {
-            return Err(anyhow!("Failed to create window"));
-        }
-
-        // Create tab control if decorations are enabled
-        let tab_control = if config.decorations {
-            Some(unsafe {
-                CreateWindowExW(
-                    Default::default(),
-                    WC_TABCONTROL,
-                    None,
-                    WindowsAndMessaging::WS_CHILD | WindowsAndMessaging::WS_VISIBLE,
-                    0,
-                    0,
-                    config.width as i32,
-                    30,
-                    hwnd,
-                    None,
-                    wc.hInstance,
-                    None,
-                )
-            })
-        } else {
-            None
-        };
-
-        // Set DPI awareness
-        if config.dpi_aware {
-            unsafe {
-                SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE)?;
+            // Set DPI awareness if requested
+            if config.dpi_aware {
+                if let Err(e) = SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE) {
+                    debug!("Failed to set DPI awareness: {:?}", e);
+                }
             }
-        }
 
-        // Show window
-        unsafe {
-            ShowWindow(hwnd, SW_SHOW);
-            UpdateWindow(hwnd);
-        }
+            // Register window class
+            let wc = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                style: CS_HREDRAW | CS_VREDRAW,
+                lpfnWndProc: Some(Self::wndproc),
+                hInstance: GetModuleHandleW(None)?,
+                lpszClassName: w!("TinkerWindow"),
+                ..Default::default()
+            };
 
-        Ok(Self {
-            hwnd,
-            config,
-            tab_control,
-        })
+            if RegisterClassExW(&wc) == 0 {
+                let error = GetLastError();
+                return Err(anyhow!("Failed to register window class: {:?}", error));
+            }
+
+            // Create window
+            let hwnd = CreateWindowExW(
+                Default::default(),
+                w!("TinkerWindow"),
+                w!("Tinker Browser"),
+                WS_OVERLAPPEDWINDOW,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                800,
+                600,
+                None,
+                None,
+                GetModuleHandleW(None)?,
+                None,
+            );
+
+            if hwnd == HWND(0) {
+                let error = GetLastError();
+                return Err(anyhow!("Failed to create window: {:?}", error));
+            }
+
+            Ok(Self {
+                hwnd,
+                config,
+                tab_control: None,
+            })
+        }
     }
 
     pub fn add_tab(&self, title: &str) -> Result<()> {

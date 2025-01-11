@@ -1,8 +1,7 @@
-use tao::window::Window;
+use tao::window::{Window, WindowBuilder};
 use std::sync::Mutex;
 use anyhow::Result;
 use tao::event_loop::EventLoop;
-use tao::window::{Window, WindowBuilder};
 use tao::platform::windows::EventLoopBuilderExtWindows;
 
 #[derive(Debug)]
