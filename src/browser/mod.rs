@@ -4,119 +4,128 @@ pub mod tabs;
 pub mod tab_ui;
 
 use std::sync::{Arc, Mutex};
-use anyhow::Result;
-use tracing::info;
-use tao::window::{Window, WindowBuilder};
+use anyhow::{Result, anyhow};
+use tracing::debug;
+use tao::window::Window;
 use tao::event_loop::EventLoop;
+use raw_window_handle::HasRawWindowHandle;
 
-use crate::event::EventSystem;
-use self::tabs::TabManager;
+use crate::platform::{
+    Platform,
+    PlatformWebView,
+};
 
 #[cfg(target_os = "windows")]
-use crate::platform::windows::{WindowsManager, WindowsConfig, WindowsTheme};
+use crate::platform::{
+    WindowsWebView,
+    WindowsConfig,
+};
 
-pub struct BrowserEngine {
-    #[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+use crate::platform::{
+    MacosWebView,
+    MacosConfig,
+};
+
+pub struct Browser {
+    event_loop: EventLoop<()>,
     window: Window,
-    #[cfg(target_os = "windows")]
-    window_manager: WindowsManager,
-    tab_manager: TabManager,
-    events: Option<Arc<Mutex<EventSystem>>>,
+    webview: Option<Box<dyn PlatformWebView>>,
+    initial_url: Option<String>,
 }
 
-impl BrowserEngine {
-    pub fn new(
-        headless: bool,
-        events: Option<Arc<Mutex<EventSystem>>>,
-        initial_url: Option<String>,
-    ) -> Result<Self> {
-        #[cfg(target_os = "windows")]
-        let window_manager = {
-            let config = WindowsConfig {
-                decorations: !headless,
-                transparent: true,
-                dpi_aware: true,
-                theme: WindowsTheme::System,
-                ..Default::default()
-            };
-            WindowsManager::new(config)?
-        };
+impl Browser {
+    pub fn new(title: impl Into<String>) -> Result<Self> {
+        let event_loop = EventLoop::new();
+        let window = Window::new(&event_loop)?;
 
-        #[cfg(not(target_os = "windows"))]
-        let window = {
-            let event_loop = EventLoop::new();
-            WindowBuilder::new()
-                .with_title("Tinker")
-                .with_decorations(!headless)
-                .with_transparent(true)
-                .build(&event_loop)?
-        };
-
-        let tab_manager = TabManager::new();
-
-        Ok(Self {
+        match Platform::current() {
             #[cfg(target_os = "windows")]
-            window_manager,
-            #[cfg(not(target_os = "windows"))]
-            window,
-            tab_manager,
-            events,
-        })
+            Platform::Windows => {
+                let config = WindowsConfig {
+                    title: title.into(),
+                    width: 800,
+                    height: 600,
+                    decorations: true,
+                    dpi_aware: true,
+                };
+                Ok(Self {
+                    event_loop,
+                    window,
+                    webview: None,
+                    initial_url: None,
+                })
+            }
+            #[cfg(target_os = "macos")]
+            Platform::MacOS => {
+                let config = MacosConfig {
+                    title: title.into(),
+                    width: 800,
+                    height: 600,
+                    decorations: true,
+                };
+                Ok(Self {
+                    event_loop,
+                    window,
+                    webview: None,
+                    initial_url: None,
+                })
+            }
+            _ => Err(anyhow!("Unsupported platform")),
+        }
     }
 
-    pub fn create_tab(&mut self, url: &str) -> Result<u32> {
-        let id = self.tab_manager.create_tab(url)?;
-        
-        #[cfg(target_os = "windows")]
-        self.window_manager.add_tab(url)?;
-
-        Ok(id)
+    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+        self.initial_url = Some(url.into());
+        self
     }
 
-    pub fn close_tab(&mut self, id: u32) -> Result<()> {
-        self.tab_manager.close_tab(id)?;
-        
-        #[cfg(target_os = "windows")]
-        if let Some(index) = self.tab_manager.get_tab_index(id) {
-            self.window_manager.remove_tab(index)?;
+    pub fn run(mut self) -> Result<()> {
+        if let Some(url) = &self.initial_url {
+            debug!("Loading initial URL: {}", url);
+            #[cfg(target_os = "windows")]
+            {
+                let config = WindowsConfig {
+                    title: "Tinker".to_string(),
+                    width: 800,
+                    height: 600,
+                    decorations: true,
+                    dpi_aware: true,
+                };
+                let webview = WindowsWebView::new(&self.window, config)?;
+                webview.navigate(url)?;
+                self.webview = Some(Box::new(webview));
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let config = MacosConfig {
+                    title: "Tinker".to_string(),
+                    width: 800,
+                    height: 600,
+                    decorations: true,
+                };
+                let webview = MacosWebView::new(&self.window, config)?;
+                webview.navigate(url)?;
+                self.webview = Some(Box::new(webview));
+            }
         }
 
-        Ok(())
-    }
+        self.event_loop.run(move |event, _, control_flow| {
+            use tao::event::{Event, WindowEvent};
+            use tao::event_loop::ControlFlow;
 
-    pub fn set_active_tab(&mut self, id: u32) -> Result<()> {
-        self.tab_manager.set_active_tab(id)?;
-        
-        #[cfg(target_os = "windows")]
-        if let Some(index) = self.tab_manager.get_tab_index(id) {
-            self.window_manager.set_active_tab(index)?;
-        }
+            *control_flow = ControlFlow::Wait;
 
-        Ok(())
-    }
-
-    pub fn run(&mut self) -> Result<()> {
-        info!("Starting browser engine...");
-
-        #[cfg(target_os = "windows")]
-        {
-            self.window_manager.run()?;
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            let event_loop = EventLoop::new();
-            event_loop.run(move |event, _, control_flow| {
-                *control_flow = ControlFlow::Wait;
-
-                if let Event::WindowEvent { 
+            match event {
+                Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
                     ..
-                } = event {
+                } => {
                     *control_flow = ControlFlow::Exit;
                 }
-            });
-        }
+                _ => (),
+            }
+        });
 
         Ok(())
     }

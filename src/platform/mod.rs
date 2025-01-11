@@ -1,13 +1,18 @@
-#[cfg(target_os = "windows")]
-pub mod windows;
-#[cfg(target_os = "macos")]
-pub mod macos;
+use anyhow::Result;
 
 #[cfg(target_os = "windows")]
-pub use self::windows::*;
-#[cfg(target_os = "macos")]
-pub use self::macos::*;
+mod windows;
 
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(target_os = "windows")]
+pub use self::windows::{WindowsManager, WindowsWebView, WindowsConfig, WindowsTheme};
+
+#[cfg(target_os = "macos")]
+pub use self::macos::{MacosManager, MacosWebView, MacosConfig, MacosTheme};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Platform {
     Windows,
     MacOS,
@@ -25,9 +30,19 @@ impl Platform {
     }
 }
 
+pub trait PlatformManager {
+    fn new(config: impl Into<String>) -> Result<Self>
+    where
+        Self: Sized;
+    fn run(&self) -> Result<()>;
+}
+
 pub trait PlatformWebView {
-    fn new(window: &impl raw_window_handle::HasWindowHandle) -> anyhow::Result<wry::WebView>;
-    fn set_bounds(&self, bounds: wry::Rect);
-    fn load_url(&self, url: &str);
-    fn evaluate_script(&self, script: &str) -> anyhow::Result<()>;
+    fn new<T>(window: &T) -> Result<Self>
+    where
+        Self: Sized,
+        T: raw_window_handle::HasRawWindowHandle;
+    fn navigate(&self, url: &str) -> Result<()>;
+    fn evaluate_script(&self, script: &str) -> Result<()>;
+    fn resize(&self, width: i32, height: i32);
 } 

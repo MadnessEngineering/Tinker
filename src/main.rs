@@ -1,22 +1,15 @@
+use anyhow::Result;
 use clap::Parser;
 use tracing::{debug, error, info};
-use std::sync::{Arc, Mutex};
-use anyhow::Result;
+use tracing_subscriber::EnvFilter;
 
-mod api;
 mod browser;
-mod event;
 mod platform;
-mod templates;
 
-use crate::{
-    browser::BrowserEngine,
-    event::EventSystem,
-    platform::Platform,
-};
+use browser::Browser;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "A craftsperson's browser", long_about = None)]
+#[command(author, version, about, long_about = None)]
 struct Args {
     /// URL to load
     #[arg(short, long)]
@@ -26,118 +19,32 @@ struct Args {
     #[arg(short = 'H', long)]
     headless: bool,
 
-    /// Event broker URL
+    /// Debug mode
     #[arg(short, long)]
-    broker_url: Option<String>,
-
-    /// Number of tabs to open
-    #[arg(long)]
-    tabs: Option<usize>,
-
-    /// Enable event recording
-    #[arg(long)]
-    record: bool,
-
-    /// Path to save recorded events
-    #[arg(long)]
-    record_path: Option<String>,
-
-    /// Path to replay events from
-    #[arg(long)]
-    replay: Option<String>,
-
-    /// Speed multiplier for replay
-    #[arg(long)]
-    replay_speed: Option<f32>,
+    debug: bool,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("debug")
-        .init();
-
-    info!("Starting Tinker Workshop...");
-    
-    // Detect platform
-    let platform = Platform::current();
-    info!("Running on {:?} platform", platform);
-
-    // Parse command line arguments
+fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Initialize event system if broker URL is specified
-    let events = if let Some(broker_url) = args.broker_url.as_ref() {
-        let events = EventSystem::new(broker_url, "tinker-browser");
-        Some(Arc::new(Mutex::new(events)))
+    // Initialize logging
+    let filter = if args.debug {
+        "debug"
     } else {
-        None
+        "info"
     };
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::new(filter))
+        .init();
 
-    // Create browser instance with platform-specific configuration
-    let mut browser = BrowserEngine::new(
-        args.headless,
-        events.clone(),
-        args.url.clone(),
-    )?;
+    info!("Starting Tinker browser...");
+    debug!("Debug mode: {}", args.debug);
 
-    // Create initial tab
-    let tab_id = browser.create_tab("about:blank")?;
-
-    // Create additional tabs if requested
-    if let Some(num_tabs) = args.tabs {
-        info!("Creating {} tabs", num_tabs);
-        for i in 1..num_tabs {
-            browser.create_tab("about:blank")?;
-            info!("Created new tab {}", i);
-        }
-    }
-
-    // Load URL if provided
+    // Create and run browser
+    let mut browser = Browser::new("Tinker")?;
     if let Some(url) = args.url {
-        browser.navigate(&url)?;
-        info!("Navigating to: {}", url);
+        browser = browser.with_url(url);
     }
-
-    // Connect to event system after browser is initialized
-    if let Some(ref events) = events {
-        if let Ok(mut events) = events.lock() {
-            if let Err(e) = events.connect() {
-                error!("Failed to connect to event broker: {}. Continuing without event system.", e);
-            } else {
-                // Subscribe to all browser events using wildcard
-                if let Err(e) = events.subscribe("browser/#") {
-                    error!("Failed to subscribe to events: {}. Continuing without event subscription.", e);
-                } else {
-                    info!("Connected to event broker and subscribed to events");
-                }
-            }
-        }
-    }
-
-    // Start recording if enabled
-    if args.record {
-        if let Some(path) = args.record_path.as_deref() {
-            browser.start_recording(path);
-            info!("Recording will be saved to {}", path);
-        } else {
-            return Err("--record-path is required when --record is specified".into());
-        }
-    }
-
-    // Start replay if enabled
-    if let Some(path) = args.replay {
-        browser.load_recording(&path)?;
-        if let Some(speed) = args.replay_speed {
-            browser.set_replay_speed(speed)?;
-        }
-        browser.start_replay()?;
-        info!("Replaying events from {}", path);
-    }
-
-    // Start event loop
-    info!("Starting browser event loop");
     browser.run()?;
 
     Ok(())

@@ -4,27 +4,19 @@ use std::net::SocketAddr;
 use axum::{
     routing::get,
     Router,
-    Json,
 };
+use tokio::net::TcpListener;
 use tracing::info;
+use anyhow::Result;
 
-pub async fn start_api_server() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn start_api_server(addr: SocketAddr) -> Result<()> {
     let app = Router::new()
-        .route("/health", get(health_check));
+        .route("/", get(|| async { "Tinker API Server" }));
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3003));
     info!("API server listening on {}", addr);
-
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await?;
+    
+    let listener = TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-async fn health_check() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "status": "ok",
-        "version": env!("CARGO_PKG_VERSION")
-    }))
 }

@@ -101,6 +101,22 @@ impl TabManager {
             Ok(()) // Tab doesn't exist, silently succeed
         }
     }
+
+    pub fn get_tab_count(&self) -> usize {
+        self.tabs.len()
+    }
+
+    pub fn get_all_tabs(&self) -> Vec<&Tab> {
+        self.tabs.values().collect()
+    }
+
+    pub fn get_tab_mut(&mut self, id: u32) -> Option<&mut Tab> {
+        self.tabs.get_mut(&id)
+    }
+
+    pub fn is_active_tab(&self, id: u32) -> bool {
+        Some(id) == self.active_tab
+    }
 }
 
 #[cfg(test)]
@@ -167,7 +183,7 @@ mod tests {
         
         let tabs = manager.get_all_tabs();
         assert_eq!(tabs.len(), 2);
-        assert!(tabs.iter().any(|tab| tab.id == id1));
-        assert!(tabs.iter().any(|tab| tab.id == id2));
+        assert!(tabs.iter().any(|t| t.id == id1));
+        assert!(tabs.iter().any(|t| t.id == id2));
     }
 } 
