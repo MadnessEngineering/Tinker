@@ -283,7 +283,7 @@ impl BrowserEngine {
         let window = WindowBuilder::new()
             .with_title("Browser")
             .with_inner_size(LogicalSize::new(800, 600))
-            .with_visible(true)
+            .with_visible(false)
             .with_resizable(true)
             .with_decorations(true)
             .with_transparent(false)
@@ -342,12 +342,16 @@ impl BrowserEngine {
         let browser = Arc::new(Mutex::new(self.clone()));
         debug!("Created browser Arc<Mutex>");
 
+        // Make window visible after everything is initialized
+        window.set_visible(true);
+        debug!("Window set to visible");
+
         debug!("Starting event loop");
         window.request_redraw();
         debug!("Initial redraw requested");
 
         event_loop.run(move |event, _window_target, control_flow| {
-            *control_flow = ControlFlow::Wait;
+            *control_flow = ControlFlow::Poll;
 
             match event {
                 Event::WindowEvent { event, .. } => {
@@ -373,9 +377,10 @@ impl BrowserEngine {
                     debug!("Redraw requested");
                     if let Ok(browser) = browser.lock() {
                         if let Some(window) = &browser.window {
-                            debug!("Window state - size: {:?}, visible: {}",
+                            debug!("Window state - size: {:?}, visible: {}, position: {:?}",
                                 window.inner_size(),
-                                window.is_visible()
+                                window.is_visible(),
+                                window.outer_position().unwrap_or_default()
                             );
                         }
                     }
