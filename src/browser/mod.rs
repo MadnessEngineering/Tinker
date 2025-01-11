@@ -113,6 +113,25 @@ impl Tab {
     pub fn can_go_forward(&self) -> BrowserResult<bool> {
         self.navigation.can_go_forward()
     }
+
+    /// Reload the current page
+    pub fn reload(&self) -> BrowserResult<()> {
+        if let Some(parsed_url) = self.navigation.reload()? {
+            self.webview.load_url(parsed_url.url().as_str());
+        }
+        Ok(())
+    }
+
+    /// Stop the current page load
+    pub fn stop_loading(&self) -> BrowserResult<()> {
+        self.webview.evaluate_script("window.stop();")?;
+        self.navigation.stop_loading()
+    }
+
+    /// Get the current URL for splitting
+    pub fn get_url_for_split(&self) -> BrowserResult<Option<String>> {
+        Ok(self.navigation.get_current_for_split()?.map(|url| url.url().to_string()))
+    }
 }
 
 /// Manages multiple browser tabs
@@ -198,6 +217,53 @@ impl TabManager {
     pub fn can_go_forward(&self) -> BrowserResult<bool> {
         Ok(self.active_tab()?.map(|tab| tab.can_go_forward().unwrap_or(false)).unwrap_or(false))
     }
+
+    /// Reload the active tab
+    pub fn reload(&self) -> BrowserResult<()> {
+        if let Some(tab) = self.active_tab()? {
+            tab.reload()?;
+        }
+        Ok(())
+    }
+
+    /// Stop loading the active tab
+    pub fn stop_loading(&self) -> BrowserResult<()> {
+        if let Some(tab) = self.active_tab()? {
+            tab.stop_loading()?;
+        }
+        Ok(())
+    }
+
+    /// Split the current tab
+    pub fn split_tab(&self) -> BrowserResult<()> {
+        // Get the current URL before creating new tab
+        let current_url = if let Some(tab) = self.active_tab()? {
+            tab.get_url_for_split()?
+        } else {
+            None
+        };
+
+        // Create new tab with the same URL
+        let mut tabs = self.tabs.lock().map_err(|e| format!("Failed to lock tabs: {}", e))?;
+        let id = format!("tab_{}", tabs.len());
+        
+        // Create WebView with the same properties as the original
+        let webview = WebViewBuilder::new()
+            .with_transparent(true)
+            .with_visible(true)
+            .build()
+            .map_err(|e| format!("Failed to create WebView: {}", e))?;
+
+        let new_tab = Tab::new(id.clone(), webview);
+        
+        // Navigate to the same URL if one exists
+        if let Some(url) = current_url {
+            new_tab.navigate(&url)?;
+        }
+
+        tabs.push(new_tab);
+        Ok(())
+    }
 }
 
 mod event_viewer;
@@ -257,6 +323,9 @@ impl BrowserEngine {
         match event {
             "back" => self.tab_manager.go_back()?,
             "forward" => self.tab_manager.go_forward()?,
+            "reload" => self.tab_manager.reload()?,
+            "stop" => self.tab_manager.stop_loading()?,
+            "split" => self.tab_manager.split_tab()?,
             url => self.tab_manager.navigate(url)?,
         }
         

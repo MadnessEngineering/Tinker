@@ -57,6 +57,17 @@ impl TabBar {
             .map_err(|e| format!("Failed to update navigation state: {}", e))?;
         Ok(())
     }
+
+    /// Update loading state
+    pub fn update_loading_state(&self, is_loading: bool) -> BrowserResult<()> {
+        let script = format!(
+            "window.tabBar.updateLoadingState({});",
+            is_loading
+        );
+        self.webview.evaluate_script(&script)
+            .map_err(|e| format!("Failed to update loading state: {}", e))?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -67,4 +78,7 @@ pub enum TabCommand {
     Switch { id: usize },
     UpdateUrl { id: usize, url: String },
     UpdateTitle { id: usize, title: String },
+    Reload,
+    Stop,
+    Split,
 } 
