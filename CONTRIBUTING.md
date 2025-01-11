@@ -162,17 +162,44 @@ This section maintains a structured knowledge graph for AI assistants working on
      "WebView Factory": [
        "View creation",
        "Content rendering",
-       "Script injection"
+       "Script injection",
+       "Visibility management",
+       "Focus handling"
      ],
      "Chrome Shop": [
        "Window decoration",
        "Control elements",
-       "Native integration"
+       "Native integration",
+       "Loading indicators",
+       "Modern UI components",
+       "Tooltip system"
      ],
      "Layout Engine": [
        "Component positioning",
        "Resize handling",
-       "Z-index management"
+       "Z-index management",
+       "CSS theming system",
+       "Responsive design"
+     ],
+     "State Feedback": [
+       "Loading states",
+       "Navigation progress",
+       "Error visualization",
+       "User interaction feedback"
+     ]
+   }
+   - design_principles: {
+     "Visibility": [
+       "Explicit window visibility",
+       "WebView visibility sync",
+       "Focus management",
+       "Z-index hierarchy"
+     ],
+     "User Experience": [
+       "Loading indicators",
+       "Interactive feedback",
+       "Consistent theming",
+       "Modern design patterns"
      ]
    }
 }
@@ -245,6 +272,42 @@ This section maintains a structured knowledge graph for AI assistants working on
      "Standard patterns",
      "Metric collection"
    ]
+}
+
+4. UIDesign {
+   - pattern: "Modern web components"
+   - principle: "Consistent user experience"
+   - styling: "CSS variables for theming"
+   - feedback: "Visual indicators for all states"
+   - guidelines: [
+     "Use loading indicators for async operations",
+     "Provide tooltips for interactive elements",
+     "Maintain consistent visual hierarchy",
+     "Handle all window and WebView visibility explicitly",
+     "Implement proper focus management",
+     "Use modern design patterns",
+     "Ensure responsive layout adaptation"
+   ]
+   - components: {
+     "Navigation": [
+       "URL input with search capability",
+       "Progress indicators",
+       "Navigation buttons with tooltips",
+       "Loading feedback"
+     ],
+     "Window": [
+       "Explicit visibility management",
+       "Focus handling",
+       "Proper z-index hierarchy",
+       "Responsive resizing"
+     ],
+     "Feedback": [
+       "Loading states",
+       "Error visualization",
+       "Interactive responses",
+       "State transitions"
+     ]
+   }
 }
 
 ### Integration Points
