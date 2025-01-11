@@ -3,99 +3,59 @@ use std::sync::mpsc::Sender;
 use wry::{WebView, WebViewBuilder};
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error};
+use crate::browser::error::BrowserResult;
 
+/// Manages the browser's tab bar UI
 #[derive(Clone)]
 pub struct TabBar {
-    webview: Arc<Mutex<WebView>>,
-    cmd_tx: Sender<TabCommand>,
+    webview: Arc<wry::WebView>,
 }
 
 impl TabBar {
-    pub fn new(window: &Window, cmd_tx: Sender<TabCommand>) -> Result<Self, String> {
-        debug!("Creating new TabBar");
-        
-        let webview = WebViewBuilder::new(window)
-            .with_bounds(wry::Rect {
-                x: 0_i32,
-                y: 0_i32,
-                width: window.inner_size().width,
-                height: 40,
-            })
-            .with_visible(true)
-            .with_transparent(false)
-            .with_initialization_script(include_str!("../templates/tab_bar.js"))
+    pub fn new() -> Self {
+        // Initialize tab bar WebView
+        let webview = WebViewBuilder::new()
             .with_html(include_str!("../templates/tab_bar.html"))
-            .map_err(|e| format!("Failed to create tab bar WebView: {}", e))?
+            .with_initialization_script(include_str!("../templates/tab_bar.js"))
             .build()
-            .map_err(|e| format!("Failed to build tab bar WebView: {}", e))?;
+            .expect("Failed to create tab bar WebView");
 
-        debug!("TabBar WebView created successfully");
-        
-        Ok(TabBar {
-            webview: Arc::new(Mutex::new(webview)),
-            cmd_tx,
-        })
-    }
-
-    pub fn add_tab(&self, id: u32, title: &str, url: &str) {
-        if let Ok(webview) = self.webview.lock() {
-            let _ = webview.evaluate_script(&format!(
-                "addTab({}, '{}', '{}');",
-                id,
-                title.replace('\'', "\\'"),
-                url.replace('\'', "\\'")
-            ));
+        Self {
+            webview: Arc::new(webview),
         }
     }
 
-    pub fn remove_tab(&self, id: u32) {
-        if let Ok(webview) = self.webview.lock() {
-            let _ = webview.evaluate_script(&format!("removeTab({});", id));
-        }
+    /// Add a new tab to the UI
+    pub fn add_tab(&self, id: &str) -> BrowserResult<()> {
+        let script = format!(
+            "window.tabBar.addTab('{}', 'New Tab', 'about:blank');",
+            id
+        );
+        self.webview.evaluate_script(&script)
+            .map_err(|e| format!("Failed to add tab: {}", e))?;
+        Ok(())
     }
 
-    pub fn set_active_tab(&self, id: u32) {
-        if let Ok(webview) = self.webview.lock() {
-            let _ = webview.evaluate_script(&format!("setActiveTab({});", id));
-        }
+    /// Update the URL display
+    pub fn update_url(&self, url: &str) -> BrowserResult<()> {
+        let script = format!(
+            "window.tabBar.updateUrl('{}');",
+            url.replace('\'', "\\'")
+        );
+        self.webview.evaluate_script(&script)
+            .map_err(|e| format!("Failed to update URL: {}", e))?;
+        Ok(())
     }
 
-    pub fn update_bounds(&self, window: &Window) {
-        if let Ok(view) = self.webview.lock() {
-            view.set_bounds(wry::Rect {
-                x: 0_i32,
-                y: 0_i32,
-                width: window.inner_size().width,
-                height: 40,
-            });
-            view.set_visible(true);
-        }
-    }
-
-    pub fn update_tab_url(&self, id: usize, url: &str) {
-        if let Ok(view) = self.webview.lock() {
-            let msg = serde_json::json!({
-                "type": "updateUrl",
-                "id": id,
-                "url": url
-            });
-            if let Err(e) = view.evaluate_script(&format!("window.updateTabUrl({});", msg)) {
-                error!("Failed to update tab URL: {}", e);
-            }
-        }
-    }
-
-    pub fn update_tab_title(&self, id: usize, title: &str) {
-        if let Ok(view) = self.webview.lock() {
-            let msg = serde_json::json!({
-                "type": "updateTitle",
-                "id": id,
-                "title": title
-            });
-            if let Err(e) = view.evaluate_script(&format!("window.updateTabTitle({});", msg)) {
-                error!("Failed to update tab title: {}", e);
-            }
-        }
+    /// Update navigation button states
+    pub fn update_navigation_state(&self, can_go_back: bool, can_go_forward: bool) -> BrowserResult<()> {
+        let script = format!(
+            "window.tabBar.updateNavigationState({}, {});",
+            can_go_back, can_go_forward
+        );
+        self.webview.evaluate_script(&script)
+            .map_err(|e| format!("Failed to update navigation state: {}", e))?;
+        Ok(())
     }
 }
 
