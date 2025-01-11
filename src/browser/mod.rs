@@ -283,7 +283,7 @@ impl BrowserEngine {
         let window = WindowBuilder::new()
             .with_title("Browser")
             .with_inner_size(LogicalSize::new(800, 600))
-            .with_visible(false)
+            .with_visible(true)
             .with_resizable(true)
             .with_decorations(true)
             .with_transparent(false)
@@ -342,11 +342,11 @@ impl BrowserEngine {
         let browser = Arc::new(Mutex::new(self.clone()));
         debug!("Created browser Arc<Mutex>");
 
-        // Make window visible after everything is initialized
+        // Force window to front and request focus
         window.set_visible(true);
-        debug!("Window set to visible");
+        window.set_focus();
+        debug!("Window set to visible and focused");
 
-        debug!("Starting event loop");
         window.request_redraw();
         debug!("Initial redraw requested");
 
@@ -382,6 +382,12 @@ impl BrowserEngine {
                                 window.is_visible(),
                                 window.outer_position().unwrap_or_default()
                             );
+                            // Ensure window is visible and focused
+                            if !window.is_visible() {
+                                window.set_visible(true);
+                                window.set_focus();
+                                debug!("Forced window visibility and focus");
+                            }
                         }
                     }
                 }
@@ -390,6 +396,8 @@ impl BrowserEngine {
                 }
                 Event::Resumed => {
                     debug!("Window resumed");
+                    window.set_visible(true);
+                    window.set_focus();
                     window.request_redraw();
                 }
                 _ => {
@@ -704,13 +712,16 @@ impl BrowserEngine {
         debug!("Creating WebView with bounds: {:?}", webview_bounds);
 
         debug!("Creating WebView");
-        let builder = WebViewBuilder::new(window);
+        let builder = WebViewBuilder::new(window)
+            .with_bounds(webview_bounds)
+            .with_visible(true)  // Ensure WebView is visible
+            .with_transparent(false)
+            .with_initialization_script(include_str!("../templates/window_chrome.js"))
+            .with_html(include_str!("../templates/window_chrome.html"))?;
+            
         debug!("Created WebViewBuilder");
         
         let webview = builder
-            .with_bounds(webview_bounds)
-            .with_initialization_script(include_str!("../templates/window_chrome.js"))
-            .with_html(include_str!("../templates/window_chrome.html"))?
             .build()
             .map_err(WebViewError::InitError)?;
 
@@ -726,7 +737,7 @@ impl BrowserEngine {
             tab_bar.update_bounds(window);
         }
 
-        // Update content view bounds
+        // Update content view bounds and ensure visibility
         if let Some(ref content_view) = self.content_view {
             if let Ok(view) = content_view.lock() {
                 view.set_bounds(wry::Rect {
@@ -735,6 +746,7 @@ impl BrowserEngine {
                     width: window.inner_size().width,
                     height: window.inner_size().height.saturating_sub(tab_height),
                 });
+                view.set_visible(true);  // Ensure WebView remains visible after bounds update
             }
         }
     }

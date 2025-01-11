@@ -21,6 +21,8 @@ impl TabBar {
                 width: window.inner_size().width,
                 height: 40,
             })
+            .with_visible(true)
+            .with_transparent(false)
             .with_initialization_script(include_str!("../templates/tab_bar.js"))
             .with_html(include_str!("../templates/tab_bar.html"))
             .map_err(|e| format!("Failed to create tab bar WebView: {}", e))?
@@ -66,6 +68,7 @@ impl TabBar {
                 width: window.inner_size().width,
                 height: 40,
             });
+            view.set_visible(true);
         }
     }
 
