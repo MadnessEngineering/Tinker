@@ -1,6 +1,21 @@
 use std::error::Error;
-use v8::{HandleScope, Context, Local, Value};
+use std::sync::Once;
+use v8::{HandleScope, Context, Local, Value, Platform};
 use super::{JsEngine, JsEngineType};
+
+static V8_INIT: Once = Once::new();
+static mut V8_PLATFORM: Option<Box<dyn Platform>> = None;
+
+fn init_platform() {
+    V8_INIT.call_once(|| {
+        let platform = v8::new_default_platform(0, false).make_shared();
+        v8::V8::initialize_platform(platform.clone());
+        v8::V8::initialize();
+        unsafe {
+            V8_PLATFORM = Some(platform);
+        }
+    });
+}
 
 pub struct V8Engine {
     isolate: v8::OwnedIsolate,
@@ -9,9 +24,8 @@ pub struct V8Engine {
 
 impl V8Engine {
     pub fn new() -> Result<Self, Box<dyn Error>> {
-        // Initialize V8
-        v8::V8::initialize_platform(v8::new_default_platform(0, false).make_shared());
-        v8::V8::initialize();
+        // Initialize V8 platform if not already initialized
+        init_platform();
 
         // Create a new isolate and context
         let mut isolate = v8::Isolate::new(Default::default());
@@ -84,8 +98,14 @@ impl JsEngine for V8Engine {
     }
 
     fn cleanup(&self) -> Result<(), Box<dyn Error>> {
-        v8::V8::dispose();
-        v8::V8::dispose_platform();
+        // Note: We don't dispose of V8 here since it's managed by the singleton
         Ok(())
+    }
+}
+
+impl Drop for V8Engine {
+    fn drop(&mut self) {
+        // Clean up instance-specific resources
+        self.isolate.dispose();
     }
 } 
