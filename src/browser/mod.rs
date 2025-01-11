@@ -52,7 +52,7 @@ pub mod keyboard;
 use self::{
     tabs::TabManager,
     event_viewer::EventViewer,
-    tab_ui::{TabBar, TabCommand},
+    tab_ui::TabBar,
     replay::{EventRecorder, EventPlayer},
 };
 
@@ -392,8 +392,6 @@ impl BrowserEngine {
                 },
             }
         });
-
-        Ok(())
     }
 
     pub fn create_tab(&mut self, url: &str) -> Result<usize, WebViewError> {
@@ -691,7 +689,10 @@ impl BrowserEngine {
         debug!("Creating WebView with bounds: {:?}", webview_bounds);
 
         debug!("Creating WebView");
-        let webview = WebViewBuilder::new(window)
+        let builder = WebViewBuilder::new(window);
+        debug!("Created WebViewBuilder");
+        
+        let webview = builder
             .with_bounds(webview_bounds)
             .with_initialization_script(include_str!("../templates/window_chrome.js"))
             .with_html(include_str!("../templates/window_chrome.html"))
@@ -767,7 +768,7 @@ impl BrowserEngine {
                         match command {
                             KeyCommand::NewTab => {
                                 debug!("Creating new tab");
-                                self.create_tab("about:blank")?;
+                                self.create_tab("about:blank").map_err(|e| e.to_string())?;
                             }
                             KeyCommand::CloseTab => {
                                 debug!("Closing current tab");
@@ -780,7 +781,7 @@ impl BrowserEngine {
 
                                 // Close the tab if we got an ID
                                 if let Some(id) = tab_id {
-                                    self.close_tab(id)?;
+                                    self.close_tab(id).map_err(|e| e.to_string())?;
                                 }
                             }
                             KeyCommand::SwitchTab(index) => {
@@ -794,7 +795,7 @@ impl BrowserEngine {
 
                                 // Switch to the tab if we got an ID
                                 if let Some(id) = tab_id {
-                                    self.switch_to_tab(id)?;
+                                    self.switch_to_tab(id).map_err(|e| e.to_string())?;
                                 }
                             }
                             _ => {} // Ignore other commands for now
