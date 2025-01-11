@@ -1,17 +1,18 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use wry::{WebView, WebViewBuilder};
 use raw_window_handle::HasWindowHandle;
 use super::PlatformWebView;
 
 pub struct WindowsWebView {
-    webview: WebView,
+    pub webview: WebView,
 }
 
 impl WindowsWebView {
     pub fn new(window: &impl HasWindowHandle) -> Result<Self> {
         let webview = WebViewBuilder::new(window)
             .with_transparent(true)
-            .build()?;
+            .build()
+            .map_err(|e| anyhow!("Failed to create Windows WebView: {}", e))?;
         
         Ok(Self { webview })
     }
@@ -19,9 +20,11 @@ impl WindowsWebView {
 
 impl PlatformWebView for WindowsWebView {
     fn new(window: &impl HasWindowHandle) -> Result<WebView> {
-        Ok(WebViewBuilder::new(window)
+        let webview = WebViewBuilder::new(window)
             .with_transparent(true)
-            .build()?)
+            .build()
+            .map_err(|e| anyhow!("Failed to create Windows WebView: {}", e))?;
+        Ok(webview)
     }
 
     fn set_bounds(&self, bounds: wry::Rect) {
@@ -33,7 +36,7 @@ impl PlatformWebView for WindowsWebView {
     }
 
     fn evaluate_script(&self, script: &str) -> Result<()> {
-        self.webview.evaluate_script(script)?;
-        Ok(())
+        self.webview.evaluate_script(script)
+            .map_err(|e| anyhow!("Failed to evaluate script: {}", e))
     }
 } 
