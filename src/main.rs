@@ -1,5 +1,5 @@
 use clap::Parser;
-use log::{debug, error, info, LevelFilter};
+use tracing::{debug, error, info};
 use std::sync::{Arc, Mutex};
 use anyhow::Result;
 
@@ -53,9 +53,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    env_logger::Builder::new()
-        .filter_level(LevelFilter::Debug)
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter("debug")
         .init();
 
     info!("Starting Tinker Workshop...");
