@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-iced = { version = "0.10", features = ["canvas", "tokio", "debug"], default-features = false }
-html5ever = "0.26"
+iced = { version = "0.10", default-features = false, features = ["tokio", "wgpu"] }
 tokio = { version = "1.0", features = ["full"] }
 async-trait = "0.1"
 url = "2.5"
