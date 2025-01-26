@@ -1,0 +1,18 @@
+[submodule "example_projects/kosmonaut"]
+	path = example_projects/kosmonaut
+	url = https://github.com/twilco/kosmonaut.git
+[submodule "example_projects/browser-agent"]
+	path = example_projects/browser-agent
+	url = https://github.com/m1guelpf/browser-agent.git
+[submodule "example_projects/html5ever"]
+	path = example_projects/html5ever
+	url = https://github.com/servo/html5ever.git
+[submodule "example_projects/gosub-engine"]
+	path = example_projects/gosub-engine
+	url = https://github.com/gosub-io/gosub-engine.git
+[submodule "example_projects/rustium"]
+	path = example_projects/rustium
+	url = https://github.com/pcwalton/rustium.git
+[submodule "example_projects/vimini"]
+	path = example_projects/vimini
+	url = https://git.sr.ht/~lufte/vimini
