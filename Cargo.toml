@@ -5,7 +5,8 @@ edition = "2021"
 
 [dependencies]
 tao = "0.24"
-wry = { version = "0.35", default-features = true }
+wry = "0.35"
+raw-window-handle = "0.5"
 tokio = { version = "1.0", features = ["full"] }
 url = "2.5"
 tracing = "0.1.40"

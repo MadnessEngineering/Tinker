@@ -25,8 +25,15 @@ impl fmt::Display for Error {
 
 impl StdError for Error {}
 
-impl<T: StdError> From<T> for Error {
-    fn from(err: T) -> Self {
+// Implement specific conversions instead of a blanket implementation
+impl From<wry::Error> for Error {
+    fn from(err: wry::Error) -> Self {
+        Error::new(err.to_string())
+    }
+}
+
+impl From<tao::error::OsError> for Error {
+    fn from(err: tao::error::OsError) -> Self {
         Error::new(err.to_string())
     }
 }
