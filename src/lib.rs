@@ -6,9 +6,6 @@ pub mod templates;
 
 // Re-export common types
 pub use platform::{
-    PlatformWindow,
-    PlatformWebView,
-    WindowTheme,
     PlatformError,
     common::{
         WindowConfig,
@@ -30,13 +27,12 @@ pub const TRANSPARENT_WINDOWS: bool = false;
 
 /// Initialize the browser with default configuration
 pub fn init() -> Result<browser::BrowserEngine, Box<dyn std::error::Error>> {
-    let config = platform::common::utils::get_default_window_config();
-    browser::BrowserEngine::new(config)
+    Ok(browser::BrowserEngine::new(false, None, None))
 }
 
 /// Initialize the browser with custom configuration
 pub fn init_with_config(config: WindowConfig) -> Result<browser::BrowserEngine, Box<dyn std::error::Error>> {
-    browser::BrowserEngine::new(config)
+    Ok(browser::BrowserEngine::new(false, None, Some(config.title)))
 }
 
 #[cfg(test)]

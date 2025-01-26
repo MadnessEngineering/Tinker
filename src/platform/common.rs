@@ -9,20 +9,22 @@ pub struct WindowConfig {
     pub title: String,
     pub width: u32,
     pub height: u32,
-    pub visible: bool,
-    pub transparent: bool,
+    pub resizable: bool,
     pub decorations: bool,
+    pub transparent: bool,
+    pub always_on_top: bool,
 }
 
 impl Default for WindowConfig {
     fn default() -> Self {
         Self {
-            title: "Tinker".to_string(),
+            title: String::from("Tinker Browser"),
             width: 1024,
             height: 768,
-            visible: false,
-            transparent: true,
+            resizable: true,
             decorations: true,
+            transparent: false,
+            always_on_top: false,
         }
     }
 }
@@ -30,67 +32,26 @@ impl Default for WindowConfig {
 /// Common WebView configuration across platforms
 #[derive(Debug, Clone)]
 pub struct WebViewConfig {
+    pub url: String,
     pub transparent: bool,
-    pub visible: bool,
-    pub init_script: Option<String>,
+    pub initialization_scripts: Vec<String>,
 }
 
 impl Default for WebViewConfig {
     fn default() -> Self {
         Self {
-            transparent: true,
-            visible: false,
-            init_script: Some(include_str!("../../assets/js/init.js").to_string()),
+            url: String::from("about:blank"),
+            transparent: false,
+            initialization_scripts: Vec::new(),
         }
     }
 }
 
 /// Platform-agnostic window handle
-#[derive(Clone)]
-pub struct WindowHandle {
-    window: Arc<Window>,
-}
-
-impl WindowHandle {
-    pub fn new(window: Window) -> Self {
-        Self {
-            window: Arc::new(window),
-        }
-    }
-
-    pub fn get_window(&self) -> &Window {
-        &self.window
-    }
-
-    pub fn set_visible(&self, visible: bool) {
-        self.window.set_visible(visible);
-    }
-
-    pub fn set_title(&self, title: &str) {
-        self.window.set_title(title);
-    }
-}
+pub type WindowHandle = Arc<Window>;
 
 /// Platform-agnostic WebView handle
-pub struct WebViewHandle {
-    webview: WebView,
-}
-
-impl WebViewHandle {
-    pub fn new(webview: WebView) -> Self {
-        Self { webview }
-    }
-
-    pub fn evaluate_script(&self, script: &str) -> Result<(), PlatformError> {
-        self.webview
-            .evaluate_script(script)
-            .map_err(|e| PlatformError::Other(e.to_string()))
-    }
-
-    pub fn get_window(&self) -> Option<&Window> {
-        self.webview.window().as_window()
-    }
-}
+pub type WebViewHandle = Arc<WebView>;
 
 /// Utility functions for platform-specific operations
 pub mod utils {
@@ -129,20 +90,21 @@ mod tests {
     #[test]
     fn test_window_config_default() {
         let config = WindowConfig::default();
-        assert_eq!(config.title, "Tinker");
+        assert_eq!(config.title, "Tinker Browser");
         assert_eq!(config.width, 1024);
         assert_eq!(config.height, 768);
-        assert!(!config.visible);
-        assert!(config.transparent);
+        assert!(config.resizable);
         assert!(config.decorations);
+        assert!(!config.transparent);
+        assert!(!config.always_on_top);
     }
 
     #[test]
     fn test_webview_config_default() {
         let config = WebViewConfig::default();
-        assert!(config.transparent);
-        assert!(!config.visible);
-        assert!(config.init_script.is_some());
+        assert_eq!(config.url, "about:blank");
+        assert!(!config.transparent);
+        assert!(config.initialization_scripts.is_empty());
     }
 
     #[test]
