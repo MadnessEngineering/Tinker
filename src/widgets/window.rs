@@ -3,6 +3,7 @@ use gtk::{self, Application, ApplicationWindow, Box as GtkBox, Button, Orientati
 use gio::{ApplicationFlags, SimpleAction};
 
 use super::notebook::TinkerNotebook;
+use super::web_view::WebContent;
 
 pub struct MainWindow {
     window: ApplicationWindow,
@@ -41,11 +42,10 @@ impl MainWindow {
         // Create notebook
         let notebook = TinkerNotebook::new();
         
-        // Add default tab
-        let content = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .build();
-        notebook.add_tab("Welcome", &content);
+        // Add default tab with web content
+        let web_content = WebContent::new();
+        web_content.load_url("https://example.com");
+        notebook.add_tab("New Tab", web_content.widget());
 
         // Add widgets to main box
         main_box.append(&toolbar);
@@ -57,24 +57,22 @@ impl MainWindow {
         // Connect new tab button
         let notebook_clone = notebook.widget().clone();
         new_tab_button.connect_clicked(move |_| {
-            let content = GtkBox::builder()
-                .orientation(Orientation::Vertical)
-                .build();
+            let web_content = WebContent::new();
+            web_content.load_url("https://example.com");
             let label = gtk::Label::new(Some("New Tab"));
-            notebook_clone.append_page(&content, Some(&label));
-            content.show();
+            notebook_clone.append_page(web_content.widget(), Some(&label));
+            web_content.widget().show();
         });
 
         // Add tab actions to the application
         let action = SimpleAction::new("tab.new", None);
         let notebook_clone = notebook.widget().clone();
         action.connect_activate(move |_, _| {
-            let content = GtkBox::builder()
-                .orientation(Orientation::Vertical)
-                .build();
+            let web_content = WebContent::new();
+            web_content.load_url("https://example.com");
             let label = gtk::Label::new(Some("New Tab"));
-            notebook_clone.append_page(&content, Some(&label));
-            content.show();
+            notebook_clone.append_page(web_content.widget(), Some(&label));
+            web_content.widget().show();
         });
         app.add_action(&action);
 

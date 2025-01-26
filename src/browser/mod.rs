@@ -58,6 +58,129 @@ use self::{
 
 use crate::event::{BrowserEvent, EventSystem, BrowserCommand};
 
+mod tab;
+mod message;
+
+use std::collections::HashMap;
+
+use iced::{
+    executor,
+    theme::Theme,
+    widget::{container, row, Column},
+    Application, Command, Element, Length, Subscription,
+};
+
+pub use message::Message;
+pub use tab::{Tab, TabId};
+use crate::ui::widget::{navigation::NavigationBar, tabs::TabBar};
+
+/// The main browser application
+pub struct Browser {
+    /// Active tabs
+    tabs: HashMap<TabId, Tab>,
+    /// Currently active tab
+    active_tab: Option<TabId>,
+    /// Navigation bar state
+    navigation: NavigationBar,
+    /// Tab bar state
+    tab_bar: TabBar,
+}
+
+impl Application for Browser {
+    type Message = Message;
+    type Theme = Theme;
+    type Executor = executor::Default;
+    type Flags = ();
+
+    fn new(_flags: ()) -> (Self, Command<Message>) {
+        let mut browser = Browser {
+            tabs: HashMap::new(),
+            active_tab: None,
+            navigation: NavigationBar::new(),
+            tab_bar: TabBar::new(),
+        };
+
+        // Create initial tab
+        let (tab, cmd) = Tab::new("about:blank".into());
+        let id = tab.id();
+        browser.tabs.insert(id, tab);
+        browser.active_tab = Some(id);
+
+        (browser, cmd)
+    }
+
+    fn title(&self) -> String {
+        if let Some(id) = self.active_tab {
+            if let Some(tab) = self.tabs.get(&id) {
+                return format!("{} - Tinker", tab.title());
+            }
+        }
+        "Tinker".into()
+    }
+
+    fn update(&mut self, message: Message) -> Command<Message> {
+        match message {
+            Message::TabMessage(id, msg) => {
+                if let Some(tab) = self.tabs.get_mut(&id) {
+                    tab.update(msg)
+                } else {
+                    Command::none()
+                }
+            }
+            Message::NewTab => {
+                let (tab, cmd) = Tab::new("about:blank".into());
+                let id = tab.id();
+                self.tabs.insert(id, tab);
+                self.active_tab = Some(id);
+                cmd
+            }
+            Message::CloseTab(id) => {
+                self.tabs.remove(&id);
+                if Some(id) == self.active_tab {
+                    self.active_tab = self.tabs.keys().next().copied();
+                }
+                Command::none()
+            }
+            Message::ActivateTab(id) => {
+                self.active_tab = Some(id);
+                Command::none()
+            }
+            Message::Navigate(url) => {
+                if let Some(id) = self.active_tab {
+                    if let Some(tab) = self.tabs.get_mut(&id) {
+                        return tab.navigate(url);
+                    }
+                }
+                Command::none()
+            }
+        }
+    }
+
+    fn view(&self) -> Element<Message> {
+        let tabs = self.tab_bar.view(&self.tabs, self.active_tab);
+        let navigation = self.navigation.view();
+        
+        let content = if let Some(id) = self.active_tab {
+            if let Some(tab) = self.tabs.get(&id) {
+                tab.view().map(move |msg| Message::TabMessage(id, msg))
+            } else {
+                container("No tab selected").into()
+            }
+        } else {
+            container("No tabs open").into()
+        };
+
+        Column::new()
+            .push(row![tabs, navigation].height(Length::Shrink))
+            .push(content)
+            .into()
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        Subscription::none()
+    }
+}
+
 pub struct BrowserEngine {
     pub headless: bool,
     pub events: Option<Arc<Mutex<EventSystem>>>,

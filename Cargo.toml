@@ -4,10 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-gtk = { version = "0.6", package = "gtk4", features = ["v4_8"] }
-gdk = "0.6"
-gio = { version = "0.17", features = ["v2_66"] }
-glib = { version = "0.17", features = ["v2_66"] }
+iced = { version = "0.10", features = ["canvas", "tokio", "debug"], default-features = false }
+html5ever = "0.26"
+tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1"
+url = "2.5"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"

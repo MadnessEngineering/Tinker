@@ -1,0 +1,15 @@
+[submodule "vimini"]
+	path = vimini
+	url = https://git.sr.ht/~lufte/vimini
+[submodule "rustium"]
+	path = rustium
+	url = https://github.com/pcwalton/rustium.git
+[submodule "gosub-engine"]
+	path = gosub-engine
+	url = https://github.com/gosub-io/gosub-engine.git
+[submodule "html5ever"]
+	path = html5ever
+	url = https://github.com/servo/html5ever.git
+[submodule "kosmonaut"]
+	path = kosmonaut
+	url = https://github.com/twilco/kosmonaut.git

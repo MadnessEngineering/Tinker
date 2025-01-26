@@ -15,4 +15,10 @@ fn main() {
         .atleast_version("4.6")
         .probe("gtk4")
         .unwrap();
+
+    // Detect WebKit
+    pkg_config::Config::new()
+        .atleast_version("2.36")
+        .probe("webkit2gtk-4.0")
+        .unwrap();
 } 
