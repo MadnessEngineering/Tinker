@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wry = { version = "0.35", features = ["transparent"] }
-tao = { version = "0.25", features = ["rwh_05"] }
-raw-window-handle = "0.5.2"
+gtk = { version = "0.18", package = "gtk4", features = ["v4_12"] }
+gio = "0.18"
+glib = "0.18"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum = "0.6.20"
