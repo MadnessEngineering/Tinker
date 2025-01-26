@@ -6,25 +6,29 @@ This document outlines the plan to migrate Tinker from wry WebView to GTK, incor
 ## Architecture Changes
 
 ### 1. Window Management
-- [ ] Replace `wry::WebView` with `gtk::ApplicationWindow`
-- [ ] Implement window chrome using GTK widgets instead of HTML/CSS
-- [ ] Migrate window configuration from wry-specific to GTK-specific settings
+- [x] Replace `wry::WebView` with `gtk::ApplicationWindow`
+- [x] Implement window chrome using GTK widgets instead of HTML/CSS
+- [x] Migrate window configuration from wry-specific to GTK-specific settings
 - [ ] Update platform-specific window handling (MacOS, Windows, Linux)
 
 ### 2. Tab System
-- [ ] Replace WebView-based tab bar with `gtk::Notebook`
-- [ ] Implement tab management using GTK's native tab container
-- [ ] Create custom tab widgets for better control and styling
-- [ ] Migrate tab state management to work with GTK widgets
+- [x] Replace WebView-based tab bar with `gtk::Notebook`
+- [x] Implement tab management using GTK's native tab container
+- [x] Create custom tab widgets for better control and styling
+- [x] Migrate tab state management to work with GTK widgets
 
 ### 3. Content Area
 - [ ] Replace WebView content with appropriate GTK widgets
+  - [ ] Add WebKitWebView for web content
+  - [ ] Add TextView for text/code content
+  - [ ] Add ImageView for image content
+  - [ ] Add custom content handlers
 - [ ] Implement content area using `gtk::Box` or `gtk::Paned` for split views
 - [ ] Add scrollable containers where needed
 - [ ] Implement proper widget hierarchy for content organization
 
 ### 4. Event System
-- [ ] Update event handling to use GTK's signal system
+- [x] Update event handling to use GTK's signal system
 - [ ] Migrate browser events to GTK events
 - [ ] Implement proper event propagation through widget hierarchy
 - [ ] Update keyboard shortcut handling for GTK
@@ -33,9 +37,9 @@ This document outlines the plan to migrate Tinker from wry WebView to GTK, incor
 
 ### Core Changes
 1. `src/browser/mod.rs`:
-   - [ ] Replace WebView initialization with GTK setup
-   - [ ] Update window creation and management
-   - [ ] Modify event loop for GTK integration
+   - [x] Replace WebView initialization with GTK setup
+   - [x] Update window creation and management
+   - [x] Modify event loop for GTK integration
    - [ ] Update content view handling
 
 2. `src/platform/*.rs`:
@@ -45,20 +49,20 @@ This document outlines the plan to migrate Tinker from wry WebView to GTK, incor
    - [ ] Update theme handling for GTK
 
 3. `src/browser/tab_ui.rs`:
-   - [ ] Replace WebView-based tab UI with GTK widgets
-   - [ ] Implement GTK-native tab controls
-   - [ ] Update tab styling and behavior
+   - [x] Replace WebView-based tab UI with GTK widgets
+   - [x] Implement GTK-native tab controls
+   - [x] Update tab styling and behavior
 
 4. `src/browser/tabs.rs`:
-   - [ ] Update tab management for GTK widgets
-   - [ ] Modify tab state handling
-   - [ ] Implement GTK-specific tab operations
+   - [x] Update tab management for GTK widgets
+   - [x] Modify tab state handling
+   - [x] Implement GTK-specific tab operations
 
 ### New Files Needed
 1. `src/widgets/`:
-   - [ ] Create custom GTK widgets
+   - [x] Create custom GTK widgets
    - [ ] Implement widget styling
-   - [ ] Add widget behavior handlers
+   - [x] Add widget behavior handlers
 
 2. `src/ui/`:
    - [ ] Add UI layout management
@@ -73,23 +77,23 @@ This document outlines the plan to migrate Tinker from wry WebView to GTK, incor
 
 ## Implementation Strategy
 
-### Phase 1: Foundation
-1. Set up GTK dependencies
-2. Create basic window framework
-3. Implement basic widget structure
-4. Set up event system
+### Phase 1: Foundation ✅
+1. ✅ Set up GTK dependencies
+2. ✅ Create basic window framework
+3. ✅ Implement basic widget structure
+4. ✅ Set up event system
 
 ### Phase 2: Core Features
-1. Implement tab management
-2. Add content area handling
-3. Create custom widgets
-4. Set up theme system
+1. ⏳ Implement tab management (90% complete)
+2. ⏳ Add content area handling (Next up)
+3. [ ] Create custom widgets
+4. [ ] Set up theme system
 
 ### Phase 3: Polish
-1. Add animations and transitions
-2. Implement proper styling
-3. Add platform-specific optimizations
-4. Implement accessibility features
+1. [ ] Add animations and transitions
+2. [ ] Implement proper styling
+3. [ ] Add platform-specific optimizations
+4. [ ] Implement accessibility features
 
 ## Testing Strategy
 
@@ -112,6 +116,8 @@ gtk = { version = "0.18", features = ["v4_12"] }
 gtk4 = "0.18"
 gio = "0.18"
 glib = "0.18"
+webkit = { version = "0.18", package = "webkit2gtk4" }  # For web content
+sourceview5 = "0.18"  # For code/text content
 ```
 
 ## Lessons Applied from EventGhost

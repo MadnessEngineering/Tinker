@@ -1,9 +1,10 @@
 use gtk::prelude::*;
 use gtk::{Box as GtkBox, Button, Label, Orientation};
+use super::content::{Content, ContentType};
 
 pub struct Tab {
     container: GtkBox,
-    content: GtkBox,
+    content: Content,
     title: String,
 }
 
@@ -15,16 +16,31 @@ impl Tab {
             .spacing(0)
             .build();
 
-        // Create the content area
-        let content = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .spacing(0)
-            .vexpand(true)
-            .hexpand(true)
-            .build();
+        // Create the content area with default web view
+        let content = Content::new(ContentType::Web);
 
         // Add the content area to the container
-        container.append(&content);
+        container.append(content.widget());
+
+        Self {
+            container,
+            content,
+            title: title.to_string(),
+        }
+    }
+
+    pub fn new_with_type(title: &str, content_type: ContentType) -> Self {
+        // Create the main container
+        let container = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(0)
+            .build();
+
+        // Create the content area with specified type
+        let content = Content::new(content_type);
+
+        // Add the content area to the container
+        container.append(content.widget());
 
         Self {
             container,
@@ -37,7 +53,7 @@ impl Tab {
         &self.container
     }
 
-    pub fn content(&self) -> &GtkBox {
+    pub fn content(&self) -> &Content {
         &self.content
     }
 
@@ -47,6 +63,10 @@ impl Tab {
 
     pub fn set_title(&mut self, title: &str) {
         self.title = title.to_string();
+    }
+
+    pub fn load_content(&self, source: &str) -> Result<(), String> {
+        self.content.load_content(source)
     }
 }
 

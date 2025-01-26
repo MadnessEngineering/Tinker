@@ -3,8 +3,10 @@ use gtk::{Application, ApplicationWindow, Box as GtkBox, Orientation, Button};
 use gio::ApplicationFlags;
 use std::cell::RefCell;
 use std::rc::Rc;
+use tracing::info;
 
 use super::notebook::TinkerNotebook;
+use super::content::ContentType;
 
 pub struct MainWindow {
     window: ApplicationWindow,
@@ -38,9 +40,14 @@ impl MainWindow {
             .margin_bottom(6)
             .build();
 
-        // Create new tab button
-        let new_tab_button = Button::with_label("New Tab");
-        toolbar.append(&new_tab_button);
+        // Create buttons for different content types
+        let new_web_tab = Button::with_label("New Web Tab");
+        let new_text_tab = Button::with_label("New Text Tab");
+        let new_code_tab = Button::with_label("New Code Tab");
+        
+        toolbar.append(&new_web_tab);
+        toolbar.append(&new_text_tab);
+        toolbar.append(&new_code_tab);
 
         // Create notebook
         let notebook = Rc::new(RefCell::new(TinkerNotebook::new()));
@@ -52,14 +59,43 @@ impl MainWindow {
         // Add the content box to the window
         window.set_child(Some(&content_box));
 
-        // Connect new tab button
+        // Connect button signals
         let notebook_clone = notebook.clone();
-        new_tab_button.connect_clicked(move |_| {
-            notebook_clone.borrow_mut().add_tab("New Tab");
+        new_web_tab.connect_clicked(move |_| {
+            let id = notebook_clone.borrow_mut().add_tab_with_type("Web", ContentType::Web);
+            if let Some(tab) = notebook_clone.borrow().get_tab(id) {
+                info!("Loading example web content");
+                let _ = tab.load_content("https://example.com");
+            }
         });
 
-        // Create initial tab
-        notebook.borrow_mut().add_tab("Welcome");
+        let notebook_clone = notebook.clone();
+        new_text_tab.connect_clicked(move |_| {
+            let id = notebook_clone.borrow_mut().add_tab_with_type("Text", ContentType::Text);
+            if let Some(tab) = notebook_clone.borrow().get_tab(id) {
+                info!("Loading example text content");
+                let _ = tab.content().set_text_content("Hello, this is a text tab!");
+            }
+        });
+
+        let notebook_clone = notebook.clone();
+        new_code_tab.connect_clicked(move |_| {
+            let id = notebook_clone.borrow_mut().add_tab_with_type("Code", ContentType::Code);
+            if let Some(tab) = notebook_clone.borrow().get_tab(id) {
+                info!("Loading example code content");
+                let _ = tab.content().set_text_content(r#"
+fn main() {
+    println!("Hello, Tinker!");
+}
+"#);
+            }
+        });
+
+        // Create initial welcome tab
+        let id = notebook.borrow_mut().add_tab_with_type("Welcome", ContentType::Text);
+        if let Some(tab) = notebook.borrow().get_tab(id) {
+            let _ = tab.content().set_text_content("Welcome to Tinker!\n\nTry creating different types of tabs using the buttons above.");
+        }
 
         Self {
             window,

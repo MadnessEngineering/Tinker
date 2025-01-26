@@ -7,6 +7,8 @@ edition = "2021"
 gtk = { version = "0.18", package = "gtk4", features = ["v4_12"] }
 gio = "0.18"
 glib = "0.18"
+webkit = { version = "0.18", package = "webkit2gtk4" }
+sourceview5 = "0.18"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum = "0.6.20"

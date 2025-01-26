@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use tracing::debug;
 
 use super::tab::{Tab, TabLabel};
+use super::content::ContentType;
 
 pub struct TinkerNotebook {
     notebook: GtkNotebook,
@@ -30,11 +31,15 @@ impl TinkerNotebook {
     }
 
     pub fn add_tab(&mut self, title: &str) -> u32 {
+        self.add_tab_with_type(title, ContentType::Web)
+    }
+
+    pub fn add_tab_with_type(&mut self, title: &str, content_type: ContentType) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
 
         // Create new tab and label
-        let tab = Tab::new(title);
+        let tab = Tab::new_with_type(title, content_type);
         let tab_label = TabLabel::new(title);
 
         // Store tab reference
@@ -43,10 +48,12 @@ impl TinkerNotebook {
 
         // Connect close button
         let notebook_weak = self.notebook.downgrade();
+        let tabs_ref = &self.tabs;
         tab_label.connect_close(move || {
             if let Some(notebook) = notebook_weak.upgrade() {
                 if let Some(num) = notebook.page_num(&tab_content) {
                     notebook.remove_page(Some(num));
+                    debug!("Removed tab with id: {}", id);
                 }
             }
         });
@@ -58,6 +65,9 @@ impl TinkerNotebook {
         
         // Show all widgets
         tab_content.show();
+        
+        // Switch to the new tab
+        self.notebook.set_current_page(Some(self.notebook.n_pages() - 1));
         
         id
     }
