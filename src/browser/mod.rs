@@ -13,6 +13,8 @@ use tao::{
 use wry::{WebView, WebViewBuilder};
 use tracing::{debug, info, error};
 
+use crate::utils::Result;
+
 #[derive(Debug, thiserror::Error)]
 pub enum WebViewError {
     #[error("Failed to create WebView on Windows: {0}")]
@@ -84,6 +86,7 @@ pub struct Browser {
     navigation: NavigationBar,
     /// Tab bar state
     tab_bar: TabBar,
+    webview: WebView,
 }
 
 impl Application for Browser {
@@ -98,6 +101,10 @@ impl Application for Browser {
             active_tab: None,
             navigation: NavigationBar::new(),
             tab_bar: TabBar::new(),
+            webview: WebViewBuilder::new(WindowBuilder::new().with_title("Tinker Browser").with_inner_size(LogicalSize::new(1024.0, 768.0)).with_min_inner_size(LogicalSize::new(400.0, 300.0)).build(&EventLoop::new()).unwrap()).unwrap().with_url("https://example.com").with_initialization_script(include_str!("../../assets/js/init.js")).with_ipc_handler(|window_id, req| {
+                debug!("IPC request from window {}: {}", window_id.0, req);
+                // Handle IPC messages here
+            }).build().unwrap(),
         };
 
         // Create initial tab

@@ -1,33 +1,51 @@
 // WebView initialization script
 
-// Set up message passing to Rust
+// Initialize IPC communication
 window.ipc = {
-    postMessage: (msg) => window.ipc.external.invoke(JSON.stringify(msg)),
-
-    // Handle messages from Rust
-    handleMessage: (msg) =>
-    {
-        console.log('Message from Rust:', msg);
-        try
-        {
-            const data = JSON.parse(msg);
-            switch (data.type)
-            {
-                case 'navigate':
-                    window.location.href = data.url;
-                    break;
-                case 'updateTitle':
-                    document.title = data.title;
-                    break;
-                default:
-                    console.warn('Unknown message type:', data.type);
-            }
-        } catch (e)
-        {
-            console.error('Failed to parse message:', e);
-        }
+    postMessage: (message) => {
+        window.external.invoke(JSON.stringify(message));
     }
 };
+
+// Add custom styles
+const style = document.createElement('style');
+style.textContent = `
+    ::-webkit-scrollbar {
+        width: 12px;
+        height: 12px;
+    }
+    ::-webkit-scrollbar-track {
+        background: #f1f1f1;
+    }
+    ::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 6px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: #555;
+    }
+`;
+document.head.appendChild(style);
+
+// Listen for navigation events
+document.addEventListener('click', (e) => {
+    const link = e.target.closest('a');
+    if (link && link.href) {
+        window.ipc.postMessage({
+            type: 'navigation',
+            url: link.href
+        });
+    }
+});
+
+// Report page load complete
+window.addEventListener('load', () => {
+    window.ipc.postMessage({
+        type: 'loaded',
+        title: document.title,
+        url: window.location.href
+    });
+});
 
 // Monitor page events
 document.addEventListener('DOMContentLoaded', () =>

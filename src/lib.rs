@@ -1,3 +1,5 @@
-pub mod widgets;
+pub mod browser;
+pub mod utils;
 
-pub use widgets::{MainWindow, create_application};
+pub use browser::Browser;
+pub use utils::Result;

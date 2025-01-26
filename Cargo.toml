@@ -4,12 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-iced = { version = "0.10", default-features = false, features = ["tokio", "wgpu"] }
+tao = "0.24"
+wry = { version = "0.35", default-features = true }
 tokio = { version = "1.0", features = ["full"] }
-async-trait = "0.1"
 url = "2.5"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
 
 [dev-dependencies]
 assert_cmd = "2.0"
