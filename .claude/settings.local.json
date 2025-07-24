@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(cargo:*)",
+      "Bash(timeout 5 cargo run -- --url https://example.com)",
+      "Bash(true)",
+      "Bash(timeout 10 cargo run -- --url https://example.com)"
+    ],
+    "deny": []
+  }
+}

@@ -52,7 +52,7 @@ pub mod keyboard;
 use self::{
     tabs::TabManager,
     event_viewer::EventViewer,
-    tab_ui::TabBar,
+    tab_ui::{TabBar, TabCommand},
     replay::{EventRecorder, EventPlayer},
 };
 
@@ -301,7 +301,7 @@ impl BrowserEngine {
         );
 
         // Create command channel for tab bar
-        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<TabCommand>();
         debug!("Created command channel for tab bar");
 
         // Create content view before tab bar

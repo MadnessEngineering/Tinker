@@ -57,4 +57,4 @@ pub enum WindowTheme {
 //     fn create_webview(&self) -> Result<wry::WebView, Box<dyn std::error::Error>>;
 //     fn set_visibility(&self, visible: bool);
 //     fn update_bounds(&self);
-} 
+// }
