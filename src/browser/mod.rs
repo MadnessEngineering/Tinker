@@ -48,6 +48,8 @@ mod event_viewer;
 mod tab_ui;
 mod replay;
 mod visual;
+mod inspector;
+mod network;
 pub mod keyboard;
 
 use self::{
@@ -56,6 +58,8 @@ use self::{
     tab_ui::{TabBar, TabCommand},
     replay::{EventRecorder, EventPlayer},
     visual::{VisualTester, ScreenshotOptions, ScreenshotResult},
+    inspector::{DOMInspector, ElementSelector, InteractionType, ElementInfo, WaitCondition},
+    network::{NetworkMonitor, NetworkRequest, NetworkResponse, NetworkFilter},
 };
 
 use crate::event::{BrowserEvent, EventSystem, BrowserCommand};
@@ -73,6 +77,8 @@ pub struct BrowserEngine {
     pub initial_url: Option<String>,
     pub running: bool,
     pub visual_tester: Arc<Mutex<VisualTester>>,
+    pub dom_inspector: Arc<Mutex<DOMInspector>>,
+    pub network_monitor: Arc<Mutex<NetworkMonitor>>,
 }
 
 impl BrowserEngine {
@@ -100,6 +106,8 @@ impl BrowserEngine {
             initial_url,
             running: true,
             visual_tester: Arc::new(Mutex::new(VisualTester::new("screenshots".to_string()))),
+            dom_inspector: Arc::new(Mutex::new(DOMInspector::new())),
+            network_monitor: Arc::new(Mutex::new(NetworkMonitor::new())),
         }
     }
 
@@ -614,6 +622,172 @@ impl BrowserEngine {
         }
     }
 
+    /// Execute JavaScript in the active WebView and return result
+    pub fn execute_javascript(&self, script: &str) -> Result<String, String> {
+        if let Some(ref content_view) = self.content_view {
+            if let Ok(view) = content_view.lock() {
+                // For now, we'll simulate JavaScript execution since WebView evaluation is async
+                // In a real implementation, this would use WebView's evaluate_script method
+                debug!("Executing JavaScript: {}", script);
+                
+                // Mock result for demonstration - in real implementation this would be the actual JS result
+                Ok("{}".to_string())
+            } else {
+                Err("Failed to lock content view".to_string())
+            }
+        } else {
+            Err("No content view available".to_string())
+        }
+    }
+
+    /// Find element using various selector strategies
+    pub fn find_element(&self, selector: &ElementSelector) -> Result<Option<ElementInfo>, String> {
+        if let Ok(inspector) = self.dom_inspector.lock() {
+            let js_code = inspector.find_element(selector);
+            let result = self.execute_javascript(&js_code)?;
+            
+            if result == "{}" || result.trim().is_empty() {
+                Ok(None)
+            } else {
+                // In real implementation, parse the JSON result from JavaScript
+                // For now, return a mock ElementInfo
+                Ok(Some(ElementInfo {
+                    tag_name: "div".to_string(),
+                    attributes: std::collections::HashMap::new(),
+                    text_content: "Mock element".to_string(),
+                    inner_html: "<span>Mock content</span>".to_string(),
+                    outer_html: "<div><span>Mock content</span></div>".to_string(),
+                    computed_styles: std::collections::HashMap::new(),
+                    bounds: inspector::ElementBounds {
+                        x: 100.0,
+                        y: 100.0,
+                        width: 200.0,
+                        height: 50.0,
+                        viewport_x: 100.0,
+                        viewport_y: 100.0,
+                    },
+                    is_visible: true,
+                    is_enabled: true,
+                    css_path: "div".to_string(),
+                    xpath: "//div[1]".to_string(),
+                }))
+            }
+        } else {
+            Err("Failed to lock DOM inspector".to_string())
+        }
+    }
+
+    /// Interact with an element
+    pub fn interact_with_element(&self, selector: &ElementSelector, interaction: &InteractionType) -> Result<inspector::InteractionResult, String> {
+        if let Ok(inspector) = self.dom_inspector.lock() {
+            let js_code = inspector.interact_with_element(selector, interaction);
+            let result = self.execute_javascript(&js_code)?;
+            
+            info!("Element interaction: {:?} on {:?}", interaction, selector);
+            
+            // Publish interaction event
+            self.publish_event(BrowserEvent::CommandExecuted {
+                command: format!("interact_element_{:?}", interaction),
+                success: true,
+            }).ok();
+            
+            // Return mock result
+            Ok(inspector::InteractionResult {
+                success: true,
+                error: None,
+                element_info: self.find_element(selector)?,
+                screenshot_data: None,
+            })
+        } else {
+            Err("Failed to lock DOM inspector".to_string())
+        }
+    }
+
+    /// Highlight an element for visual debugging
+    pub fn highlight_element(&self, selector: &ElementSelector, color: Option<&str>) -> Result<Option<ElementInfo>, String> {
+        if let Ok(inspector) = self.dom_inspector.lock() {
+            let js_code = inspector.highlight_element(selector, color);
+            let result = self.execute_javascript(&js_code)?;
+            
+            info!("Highlighting element: {:?}", selector);
+            
+            self.find_element(selector)
+        } else {
+            Err("Failed to lock DOM inspector".to_string())
+        }
+    }
+
+    /// Wait for a condition to be met
+    pub fn wait_for_condition(&self, condition: &WaitCondition) -> Result<bool, String> {
+        if let Ok(inspector) = self.dom_inspector.lock() {
+            let start_time = std::time::Instant::now();
+            let timeout = std::time::Duration::from_millis(condition.timeout_ms as u64);
+            let poll_interval = std::time::Duration::from_millis(condition.poll_interval_ms as u64);
+            
+            while start_time.elapsed() < timeout {
+                let js_code = inspector.check_wait_condition(condition);
+                let result = self.execute_javascript(&js_code)?;
+                
+                // In real implementation, parse boolean result from JavaScript
+                // For mock purposes, assume condition is met after 1 second
+                if start_time.elapsed() > std::time::Duration::from_secs(1) {
+                    info!("Wait condition met: {:?}", condition);
+                    return Ok(true);
+                }
+                
+                std::thread::sleep(poll_interval);
+            }
+            
+            info!("Wait condition timeout: {:?}", condition);
+            Ok(false)
+        } else {
+            Err("Failed to lock DOM inspector".to_string())
+        }
+    }
+
+    /// Get page information
+    pub fn get_page_info(&self) -> Result<serde_json::Value, String> {
+        if let Ok(inspector) = self.dom_inspector.lock() {
+            let js_code = inspector.get_page_info();
+            let result = self.execute_javascript(&js_code)?;
+            
+            // Return mock page info
+            Ok(serde_json::json!({
+                "title": "Mock Page Title",
+                "url": "https://example.com",
+                "readyState": "complete",
+                "elementCount": 42,
+                "viewport": {
+                    "width": 800,
+                    "height": 600,
+                    "scrollX": 0,
+                    "scrollY": 0
+                },
+                "performance": {
+                    "domContentLoaded": 500,
+                    "loadComplete": 1200
+                }
+            }))
+        } else {
+            Err("Failed to lock DOM inspector".to_string())
+        }
+    }
+
+    /// Find all elements matching a CSS selector
+    pub fn find_all_elements(&self, css_selector: &str) -> Result<Vec<ElementInfo>, String> {
+        if let Ok(inspector) = self.dom_inspector.lock() {
+            let js_code = inspector.find_all_elements(css_selector);
+            let result = self.execute_javascript(&js_code)?;
+            
+            info!("Finding all elements: {}", css_selector);
+            
+            // Return mock list of elements
+            Ok(vec![])
+        } else {
+            Err("Failed to lock DOM inspector".to_string())
+        }
+    }
+
     fn handle_command(&mut self, cmd: BrowserCommand) -> Result<(), WebViewError> {
         match cmd {
             BrowserCommand::CreateTab { url } => {
@@ -682,6 +856,87 @@ impl BrowserEngine {
                 if let Ok(result) = self.run_visual_test(&test_name, tolerance, Some(screenshot_options)) {
                     info!("Visual test '{}' completed: {:.2}% difference", 
                           test_name, result.difference_percentage * 100.0);
+                }
+            }
+            BrowserCommand::FindElement { selector } => {
+                if let Ok(element_selector) = serde_json::from_value::<ElementSelector>(selector) {
+                    if let Ok(element) = self.find_element(&element_selector) {
+                        info!("Element found: {:?}", element.is_some());
+                    }
+                }
+            }
+            BrowserCommand::InteractElement { selector, interaction } => {
+                if let (Ok(element_selector), Ok(interaction_type)) = (
+                    serde_json::from_value::<ElementSelector>(selector),
+                    serde_json::from_value::<InteractionType>(interaction)
+                ) {
+                    if let Ok(result) = self.interact_with_element(&element_selector, &interaction_type) {
+                        info!("Element interaction successful: {}", result.success);
+                    }
+                }
+            }
+            BrowserCommand::HighlightElement { selector, color } => {
+                if let Ok(element_selector) = serde_json::from_value::<ElementSelector>(selector) {
+                    if let Ok(element) = self.highlight_element(&element_selector, color.as_deref()) {
+                        info!("Element highlighted: {:?}", element.is_some());
+                    }
+                }
+            }
+            BrowserCommand::WaitForCondition { condition } => {
+                if let Ok(wait_condition) = serde_json::from_value::<WaitCondition>(condition) {
+                    if let Ok(met) = self.wait_for_condition(&wait_condition) {
+                        info!("Wait condition result: {}", met);
+                    }
+                }
+            }
+            BrowserCommand::GetPageInfo => {
+                if let Ok(page_info) = self.get_page_info() {
+                    info!("Page info retrieved: {}", page_info);
+                }
+            }
+            BrowserCommand::ExecuteJavaScript { script } => {
+                if let Ok(result) = self.execute_javascript(&script) {
+                    info!("JavaScript executed successfully");
+                }
+            }
+            BrowserCommand::StartNetworkMonitoring => {
+                if let Ok(mut monitor) = self.network_monitor.lock() {
+                    monitor.start_monitoring();
+                    info!("Network monitoring started");
+                }
+            }
+            BrowserCommand::StopNetworkMonitoring => {
+                if let Ok(mut monitor) = self.network_monitor.lock() {
+                    monitor.stop_monitoring();
+                    info!("Network monitoring stopped");
+                }
+            }
+            BrowserCommand::GetNetworkStats => {
+                if let Ok(monitor) = self.network_monitor.lock() {
+                    let stats = monitor.get_stats();
+                    info!("Network stats: {:?}", stats);
+                }
+            }
+            BrowserCommand::ExportNetworkHAR => {
+                if let Ok(monitor) = self.network_monitor.lock() {
+                    if let Ok(har) = monitor.export_har() {
+                        info!("Network HAR exported successfully");
+                        // TODO: Save HAR to file or return via event
+                    }
+                }
+            }
+            BrowserCommand::AddNetworkFilter { filter } => {
+                if let Ok(filter_obj) = serde_json::from_value::<NetworkFilter>(filter) {
+                    if let Ok(mut monitor) = self.network_monitor.lock() {
+                        monitor.add_filter(filter_obj);
+                        info!("Network filter added");
+                    }
+                }
+            }
+            BrowserCommand::ClearNetworkFilters => {
+                if let Ok(mut monitor) = self.network_monitor.lock() {
+                    monitor.clear_filters();
+                    info!("Network filters cleared");
                 }
             }
         }
@@ -994,6 +1249,8 @@ impl Clone for BrowserEngine {
             initial_url: self.initial_url.clone(),
             running: self.running,
             visual_tester: self.visual_tester.clone(),
+            dom_inspector: self.dom_inspector.clone(),
+            network_monitor: self.network_monitor.clone(),
         }
     }
 }

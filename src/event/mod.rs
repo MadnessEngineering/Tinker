@@ -22,6 +22,18 @@ pub enum BrowserCommand {
     TakeScreenshot { options: Option<serde_json::Value> },
     CreateBaseline { test_name: String, options: Option<serde_json::Value> },
     RunVisualTest { test_name: String, tolerance: f64, options: Option<serde_json::Value> },
+    FindElement { selector: serde_json::Value },
+    InteractElement { selector: serde_json::Value, interaction: serde_json::Value },
+    HighlightElement { selector: serde_json::Value, color: Option<String> },
+    WaitForCondition { condition: serde_json::Value },
+    GetPageInfo,
+    ExecuteJavaScript { script: String },
+    StartNetworkMonitoring,
+    StopNetworkMonitoring,
+    GetNetworkStats,
+    ExportNetworkHAR,
+    AddNetworkFilter { filter: serde_json::Value },
+    ClearNetworkFilters,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +49,9 @@ pub enum BrowserEvent {
     Error { message: String },
     CommandReceived { command: String },
     CommandExecuted { command: String, success: bool },
+    NetworkRequest { request: serde_json::Value },
+    NetworkResponse { response: serde_json::Value },
+    NetworkError { error: String },
 }
 
 pub struct EventSystem {
@@ -252,6 +267,9 @@ impl EventSystem {
             BrowserEvent::Error { .. } => "browser/error",
             BrowserEvent::CommandReceived { .. } => "browser/command/received",
             BrowserEvent::CommandExecuted { .. } => "browser/command/executed",
+            BrowserEvent::NetworkRequest { .. } => "browser/network/request",
+            BrowserEvent::NetworkResponse { .. } => "browser/network/response",
+            BrowserEvent::NetworkError { .. } => "browser/network/error",
         }
     }
 

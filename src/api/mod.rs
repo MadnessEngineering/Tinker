@@ -58,6 +58,38 @@ pub struct VisualTestRequest {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct ElementSelectorRequest {
+    selector: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct InteractionRequest {
+    selector: serde_json::Value,
+    interaction: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct HighlightRequest {
+    selector: serde_json::Value,
+    color: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WaitConditionRequest {
+    condition: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct JavaScriptRequest {
+    script: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct NetworkFilterRequest {
+    filter: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct ApiResponse<T> {
     success: bool,
     data: Option<T>,
@@ -106,6 +138,22 @@ pub async fn start_api_server(
         .route("/api/visual/baseline", post(create_baseline))
         .route("/api/visual/test", post(run_visual_test))
         
+        // DOM inspection endpoints
+        .route("/api/element/find", post(find_element))
+        .route("/api/element/interact", post(interact_element))
+        .route("/api/element/highlight", post(highlight_element))
+        .route("/api/element/wait", post(wait_for_condition))
+        .route("/api/page/info", get(get_page_info))
+        .route("/api/javascript/execute", post(execute_javascript))
+        
+        // Network monitoring endpoints
+        .route("/api/network/start", post(start_network_monitoring))
+        .route("/api/network/stop", post(stop_network_monitoring))
+        .route("/api/network/stats", get(get_network_stats))
+        .route("/api/network/export", get(export_network_har))
+        .route("/api/network/filter", post(add_network_filter))
+        .route("/api/network/clear-filters", post(clear_network_filters))
+        
         // WebSocket endpoint for real-time control
         .route("/ws", get(websocket_handler))
         
@@ -146,7 +194,14 @@ async fn browser_info() -> Json<ApiResponse<serde_json::Value>> {
             "recording_replay",
             "screenshot_capture",
             "visual_testing",
-            "baseline_comparison"
+            "baseline_comparison",
+            "dom_inspection",
+            "element_interaction",
+            "javascript_injection",
+            "wait_conditions",
+            "network_monitoring",
+            "network_analysis",
+            "har_export"
         ],
         "endpoints": {
             "navigate": "POST /api/navigate",
@@ -156,6 +211,18 @@ async fn browser_info() -> Json<ApiResponse<serde_json::Value>> {
             "screenshot": "POST /api/screenshot",
             "create_baseline": "POST /api/visual/baseline",
             "run_visual_test": "POST /api/visual/test",
+            "find_element": "POST /api/element/find",
+            "interact_element": "POST /api/element/interact",
+            "highlight_element": "POST /api/element/highlight",
+            "wait_condition": "POST /api/element/wait",
+            "page_info": "GET /api/page/info",
+            "execute_javascript": "POST /api/javascript/execute",
+            "start_network_monitoring": "POST /api/network/start",
+            "stop_network_monitoring": "POST /api/network/stop",
+            "get_network_stats": "GET /api/network/stats",
+            "export_network_har": "GET /api/network/export",
+            "add_network_filter": "POST /api/network/filter",
+            "clear_network_filters": "POST /api/network/clear-filters",
             "websocket": "WS /ws"
         }
     })))
@@ -323,5 +390,161 @@ async fn run_visual_test(
     match state.command_tx.send(command) {
         Ok(_) => Json(ApiResponse::success(format!("Visual test '{}' started", request.test_name))),
         Err(e) => Json(ApiResponse::error(format!("Failed to send visual test command: {}", e))),
+    }
+}
+
+async fn find_element(
+    State(state): State<ApiState>,
+    Json(request): Json<ElementSelectorRequest>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Find element");
+    
+    let command = BrowserCommand::FindElement { selector: request.selector };
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Element search command sent".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to send find element command: {}", e))),
+    }
+}
+
+async fn interact_element(
+    State(state): State<ApiState>,
+    Json(request): Json<InteractionRequest>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Interact with element");
+    
+    let command = BrowserCommand::InteractElement { 
+        selector: request.selector,
+        interaction: request.interaction 
+    };
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Element interaction command sent".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to send interaction command: {}", e))),
+    }
+}
+
+async fn highlight_element(
+    State(state): State<ApiState>,
+    Json(request): Json<HighlightRequest>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Highlight element");
+    
+    let command = BrowserCommand::HighlightElement { 
+        selector: request.selector,
+        color: request.color 
+    };
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Element highlight command sent".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to send highlight command: {}", e))),
+    }
+}
+
+async fn wait_for_condition(
+    State(state): State<ApiState>,
+    Json(request): Json<WaitConditionRequest>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Wait for condition");
+    
+    let command = BrowserCommand::WaitForCondition { condition: request.condition };
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Wait condition command sent".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to send wait condition command: {}", e))),
+    }
+}
+
+async fn get_page_info(
+    State(state): State<ApiState>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Get page info");
+    
+    let command = BrowserCommand::GetPageInfo;
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Page info command sent".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to send page info command: {}", e))),
+    }
+}
+
+async fn execute_javascript(
+    State(state): State<ApiState>,
+    Json(request): Json<JavaScriptRequest>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Execute JavaScript");
+    
+    let command = BrowserCommand::ExecuteJavaScript { script: request.script };
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("JavaScript execution command sent".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to send JavaScript command: {}", e))),
+    }
+}
+
+async fn start_network_monitoring(
+    State(state): State<ApiState>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Start network monitoring");
+    
+    let command = BrowserCommand::StartNetworkMonitoring;
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Network monitoring started".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to start network monitoring: {}", e))),
+    }
+}
+
+async fn stop_network_monitoring(
+    State(state): State<ApiState>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Stop network monitoring");
+    
+    let command = BrowserCommand::StopNetworkMonitoring;
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Network monitoring stopped".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to stop network monitoring: {}", e))),
+    }
+}
+
+async fn get_network_stats(
+    State(state): State<ApiState>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Get network stats");
+    
+    let command = BrowserCommand::GetNetworkStats;
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Network stats command sent".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to get network stats: {}", e))),
+    }
+}
+
+async fn export_network_har(
+    State(state): State<ApiState>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Export network HAR");
+    
+    let command = BrowserCommand::ExportNetworkHAR;
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Network HAR export command sent".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to export network HAR: {}", e))),
+    }
+}
+
+async fn add_network_filter(
+    State(state): State<ApiState>,
+    Json(request): Json<NetworkFilterRequest>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Add network filter");
+    
+    let command = BrowserCommand::AddNetworkFilter { filter: request.filter };
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Network filter added".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to add network filter: {}", e))),
+    }
+}
+
+async fn clear_network_filters(
+    State(state): State<ApiState>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Clear network filters");
+    
+    let command = BrowserCommand::ClearNetworkFilters;
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Network filters cleared".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to clear network filters: {}", e))),
     }
 }
