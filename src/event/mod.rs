@@ -7,6 +7,7 @@ use std::time::Duration;
 use url::Url;
 use serde_json::json;
 use std::sync::mpsc::Sender;
+use tokio::sync::broadcast;
 use std::env;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +19,9 @@ pub enum BrowserCommand {
     SwitchTab { id: usize },
     RecordEvent { event: BrowserEvent },
     PlayEvent { event: BrowserEvent },
+    TakeScreenshot { options: Option<serde_json::Value> },
+    CreateBaseline { test_name: String, options: Option<serde_json::Value> },
+    RunVisualTest { test_name: String, tolerance: f64, options: Option<serde_json::Value> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +46,8 @@ pub struct EventSystem {
     client_id: String,
     command_sender: Option<Sender<BrowserCommand>>,
     last_reconnect_attempt: Option<std::time::Instant>,
+    event_broadcast: Option<broadcast::Sender<BrowserEvent>>,
+    command_broadcast: Option<broadcast::Receiver<BrowserCommand>>,
 }
 
 impl EventSystem {
@@ -92,6 +98,8 @@ impl EventSystem {
             client_id: client_id.to_string(),
             command_sender: None,
             last_reconnect_attempt: None,
+            event_broadcast: None,
+            command_broadcast: None,
         }
     }
 
@@ -179,9 +187,16 @@ impl EventSystem {
             return Ok(());
         }
 
+        // Broadcast to API server if available
+        if let Some(ref broadcast_tx) = self.event_broadcast {
+            if let Err(e) = broadcast_tx.send(event.clone()) {
+                debug!("Failed to broadcast event to API server: {}", e);
+            }
+        }
+
         // If no client, try to reconnect
         if self.client.is_none() && !self.try_reconnect() {
-            debug!("Event not published (no broker connection): {:?}", event);
+            debug!("Event not published to MQTT (no broker connection): {:?}", event);
             return Ok(());
         }
 
@@ -189,17 +204,17 @@ impl EventSystem {
         let payload = serde_json::to_string(&event)?;
 
         if let Some(ref mut client) = self.client {
-            debug!("Publishing event to {}: {}", topic, payload);
+            debug!("Publishing event to MQTT {}: {}", topic, payload);
             match client.publish(topic, QoS::AtLeastOnce, false, payload.as_bytes()) {
                 Ok(_) => Ok(()),
                 Err(e) => {
-                    error!("Failed to publish event: {}. Will retry connection later.", e);
+                    error!("Failed to publish event to MQTT: {}. Will retry connection later.", e);
                     self.client = None;
                     Ok(())
                 }
             }
         } else {
-            debug!("Event not published (no broker): {:?}", event);
+            debug!("Event not published to MQTT (no broker): {:?}", event);
             Ok(())
         }
     }
@@ -217,6 +232,11 @@ impl EventSystem {
 
     pub fn set_command_sender(&mut self, sender: Sender<BrowserCommand>) {
         self.command_sender = Some(sender);
+    }
+
+    pub fn set_broadcast_channels(&mut self, event_tx: broadcast::Sender<BrowserEvent>, command_rx: broadcast::Receiver<BrowserCommand>) {
+        self.event_broadcast = Some(event_tx);
+        self.command_broadcast = Some(command_rx);
     }
 
     pub fn get_topic(&self, event: &BrowserEvent) -> &'static str {
@@ -295,6 +315,8 @@ impl Clone for EventSystem {
             client_id: self.client_id.clone(),
             command_sender: self.command_sender.clone(),
             last_reconnect_attempt: self.last_reconnect_attempt.clone(),
+            event_broadcast: self.event_broadcast.clone(),
+            command_broadcast: None, // Receiver can't be cloned, will be set up separately
         }
     }
 }

@@ -50,6 +50,14 @@ struct Args {
     /// Debug mode
     #[arg(long)]
     debug: bool,
+
+    /// Enable API server
+    #[arg(long)]
+    api: bool,
+
+    /// API server port
+    #[arg(long, default_value = "3003")]
+    api_port: u16,
 }
 
 #[tokio::main]
@@ -75,9 +83,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args = Args::parse();
 
+    // Create broadcast channels for API server if enabled
+    let (api_event_tx, api_event_rx) = if args.api {
+        let (tx, rx) = tokio::sync::broadcast::channel(1000);
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+
+    let (api_command_tx, api_command_rx) = if args.api {
+        let (tx, rx) = tokio::sync::broadcast::channel(100);
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+
     // Initialize event system if broker URL is specified
     let events = if let Some(broker_url) = args.broker_url.as_ref() {
-        let events = EventSystem::new(broker_url, "tinker-browser");
+        let mut events = EventSystem::new(broker_url, "tinker-browser");
+        
+        // Set up broadcast channels for API integration
+        if let (Some(event_tx), Some(command_rx)) = (api_event_tx.clone(), api_command_rx) {
+            events.set_broadcast_channels(event_tx, command_rx);
+        }
+        
         Some(Arc::new(Mutex::new(events)))
     } else {
         None
@@ -128,6 +157,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let _ = browser.start_replay();
         info!("Replaying events from {}", path);
+    }
+
+    // Start API server if enabled
+    if args.api {
+        if let (Some(command_tx), Some(event_rx)) = (api_command_tx, api_event_rx) {
+            info!("🚀 Starting API server on port {}", args.api_port);
+            tokio::spawn(async move {
+                if let Err(e) = api::start_api_server(command_tx, event_rx).await {
+                    error!("API server error: {}", e);
+                }
+            });
+        }
     }
 
     // Start event loop

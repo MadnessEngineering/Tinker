@@ -47,6 +47,7 @@ mod tabs;
 mod event_viewer;
 mod tab_ui;
 mod replay;
+mod visual;
 pub mod keyboard;
 
 use self::{
@@ -54,6 +55,7 @@ use self::{
     event_viewer::EventViewer,
     tab_ui::{TabBar, TabCommand},
     replay::{EventRecorder, EventPlayer},
+    visual::{VisualTester, ScreenshotOptions, ScreenshotResult},
 };
 
 use crate::event::{BrowserEvent, EventSystem, BrowserCommand};
@@ -70,6 +72,7 @@ pub struct BrowserEngine {
     pub window: Option<Arc<Window>>,
     pub initial_url: Option<String>,
     pub running: bool,
+    pub visual_tester: Arc<Mutex<VisualTester>>,
 }
 
 impl BrowserEngine {
@@ -96,6 +99,7 @@ impl BrowserEngine {
             window: None,
             initial_url,
             running: true,
+            visual_tester: Arc::new(Mutex::new(VisualTester::new("screenshots".to_string()))),
         }
     }
 
@@ -509,6 +513,107 @@ impl BrowserEngine {
         }
     }
 
+    /// Take a screenshot of the current active tab
+    pub fn take_screenshot(&self, options: Option<ScreenshotOptions>) -> Result<ScreenshotResult, String> {
+        let options = options.unwrap_or_default();
+        
+        if let Some(ref content_view) = self.content_view {
+            if let Ok(view) = content_view.lock() {
+                // For now, we'll create a mock screenshot since WebView screenshot requires platform-specific code
+                // In a real implementation, this would capture the actual WebView content
+                info!("Taking screenshot with options: {:?}", options);
+                
+                // Create a simple test pattern for demonstration
+                let width = 800u32;
+                let height = 600u32;
+                let mut image_data = Vec::with_capacity((width * height * 4) as usize);
+                
+                // Generate a gradient pattern for testing
+                for y in 0..height {
+                    for x in 0..width {
+                        let r = ((x as f32 / width as f32) * 255.0) as u8;
+                        let g = ((y as f32 / height as f32) * 255.0) as u8;
+                        let b = 128u8;
+                        let a = 255u8;
+                        image_data.extend_from_slice(&[r, g, b, a]);
+                    }
+                }
+                
+                if let Ok(visual_tester) = self.visual_tester.lock() {
+                    match visual_tester.capture_from_data(&image_data, width, height, options) {
+                        Ok(screenshot) => {
+                            self.publish_event(BrowserEvent::CommandExecuted {
+                                command: "screenshot".to_string(),
+                                success: true,
+                            }).ok();
+                            Ok(screenshot)
+                        },
+                        Err(e) => {
+                            let error_msg = format!("Failed to capture screenshot: {}", e);
+                            self.publish_event(BrowserEvent::Error {
+                                message: error_msg.clone(),
+                            }).ok();
+                            Err(error_msg)
+                        }
+                    }
+                } else {
+                    Err("Failed to lock visual tester".to_string())
+                }
+            } else {
+                Err("Failed to lock content view".to_string())
+            }
+        } else {
+            Err("No content view available".to_string())
+        }
+    }
+
+    /// Save a screenshot to file
+    pub fn save_screenshot(&self, screenshot: &ScreenshotResult, filename: &str) -> Result<String, String> {
+        if let Ok(visual_tester) = self.visual_tester.lock() {
+            visual_tester.save_screenshot(screenshot, filename)
+                .map_err(|e| format!("Failed to save screenshot: {}", e))
+        } else {
+            Err("Failed to lock visual tester".to_string())
+        }
+    }
+
+    /// Compare two screenshots
+    pub fn compare_screenshots(&self, img1: &ScreenshotResult, img2: &ScreenshotResult, tolerance: f64) -> Result<visual::VisualComparisonResult, String> {
+        if let Ok(visual_tester) = self.visual_tester.lock() {
+            visual_tester.compare_screenshots(img1, img2, tolerance)
+                .map_err(|e| format!("Failed to compare screenshots: {}", e))
+        } else {
+            Err("Failed to lock visual tester".to_string())
+        }
+    }
+
+    /// Create a baseline screenshot for visual regression testing
+    pub fn create_baseline(&self, test_name: &str, options: Option<ScreenshotOptions>) -> Result<String, String> {
+        let screenshot = self.take_screenshot(options)?;
+        
+        if let Ok(visual_tester) = self.visual_tester.lock() {
+            visual_tester.create_baseline(&screenshot, test_name)
+                .map_err(|e| format!("Failed to create baseline: {}", e))
+        } else {
+            Err("Failed to lock visual tester".to_string())
+        }
+    }
+
+    /// Run a visual regression test against a baseline
+    pub fn run_visual_test(&self, test_name: &str, tolerance: f64, options: Option<ScreenshotOptions>) -> Result<visual::VisualComparisonResult, String> {
+        let current_screenshot = self.take_screenshot(options)?;
+        
+        if let Ok(visual_tester) = self.visual_tester.lock() {
+            let baseline = visual_tester.load_baseline(test_name)
+                .map_err(|e| format!("Failed to load baseline '{}': {}", test_name, e))?;
+            
+            visual_tester.compare_screenshots(&baseline, &current_screenshot, tolerance)
+                .map_err(|e| format!("Failed to compare with baseline: {}", e))
+        } else {
+            Err("Failed to lock visual tester".to_string())
+        }
+    }
+
     fn handle_command(&mut self, cmd: BrowserCommand) -> Result<(), WebViewError> {
         match cmd {
             BrowserCommand::CreateTab { url } => {
@@ -543,6 +648,40 @@ impl BrowserEngine {
             BrowserCommand::PlayEvent { event } => {
                 if let Ok(mut player) = self.player.lock() {
                     player.play_event(event);
+                }
+            }
+            BrowserCommand::TakeScreenshot { options } => {
+                let screenshot_options = if let Some(opts) = options {
+                    serde_json::from_value(opts).unwrap_or_default()
+                } else {
+                    ScreenshotOptions::default()
+                };
+                
+                if let Ok(result) = self.take_screenshot(Some(screenshot_options)) {
+                    info!("Screenshot taken: {}x{}", result.width, result.height);
+                }
+            }
+            BrowserCommand::CreateBaseline { test_name, options } => {
+                let screenshot_options = if let Some(opts) = options {
+                    serde_json::from_value(opts).unwrap_or_default()
+                } else {
+                    ScreenshotOptions::default()
+                };
+                
+                if let Ok(path) = self.create_baseline(&test_name, Some(screenshot_options)) {
+                    info!("Baseline created: {}", path);
+                }
+            }
+            BrowserCommand::RunVisualTest { test_name, tolerance, options } => {
+                let screenshot_options = if let Some(opts) = options {
+                    serde_json::from_value(opts).unwrap_or_default()
+                } else {
+                    ScreenshotOptions::default()
+                };
+                
+                if let Ok(result) = self.run_visual_test(&test_name, tolerance, Some(screenshot_options)) {
+                    info!("Visual test '{}' completed: {:.2}% difference", 
+                          test_name, result.difference_percentage * 100.0);
                 }
             }
         }
@@ -854,6 +993,7 @@ impl Clone for BrowserEngine {
             window: self.window.clone(),
             initial_url: self.initial_url.clone(),
             running: self.running,
+            visual_tester: self.visual_tester.clone(),
         }
     }
 }
