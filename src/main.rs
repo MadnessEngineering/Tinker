@@ -171,9 +171,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Start event loop
-    info!("Starting browser engine...");
+    info!("✅ Tinker Workshop fully operational!");
+    info!("🔗 API Server: http://127.0.0.1:3003");
+    info!("🔗 WebSocket: ws://127.0.0.1:3003/ws");
+    info!("🔗 Health Check: curl http://127.0.0.1:3003/health");
+    info!("🌐 Starting browser engine on main thread...");
+
+    // Browser engine must run on main thread (platform requirement)
+    // API server runs in background tokio tasks - this is correct!
     browser.run()?;
 
+    info!("👋 Tinker Workshop shutting down...");
     Ok(())
 }
