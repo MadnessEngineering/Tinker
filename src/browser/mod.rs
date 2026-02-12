@@ -1,6 +1,7 @@
 //! Browser engine implementation
 
 use std::{
+    collections::HashMap,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -50,6 +51,8 @@ mod replay;
 mod visual;
 mod inspector;
 mod network;
+mod performance;
+mod console;
 pub mod keyboard;
 
 use self::{
@@ -60,6 +63,8 @@ use self::{
     visual::{VisualTester, ScreenshotOptions, ScreenshotResult},
     inspector::{DOMInspector, ElementSelector, InteractionType, ElementInfo, WaitCondition},
     network::{NetworkMonitor, NetworkRequest, NetworkResponse, NetworkFilter},
+    performance::{PerformanceMonitor, CoreWebVitals, NavigationTiming, ResourceTiming, MemoryMetrics, JavaScriptProfile},
+    console::{ConsoleMonitor, ConsoleLevel, ConsoleMessage, JavaScriptError},
 };
 
 use crate::event::{BrowserEvent, EventSystem, BrowserCommand};
@@ -79,6 +84,8 @@ pub struct BrowserEngine {
     pub visual_tester: Arc<Mutex<VisualTester>>,
     pub dom_inspector: Arc<Mutex<DOMInspector>>,
     pub network_monitor: Arc<Mutex<NetworkMonitor>>,
+    pub performance_monitor: Arc<Mutex<PerformanceMonitor>>,
+    pub console_monitor: Arc<Mutex<ConsoleMonitor>>,
 }
 
 impl BrowserEngine {
@@ -108,6 +115,8 @@ impl BrowserEngine {
             visual_tester: Arc::new(Mutex::new(VisualTester::new("screenshots".to_string()))),
             dom_inspector: Arc::new(Mutex::new(DOMInspector::new())),
             network_monitor: Arc::new(Mutex::new(NetworkMonitor::new())),
+            performance_monitor: Arc::new(Mutex::new(PerformanceMonitor::new())),
+            console_monitor: Arc::new(Mutex::new(ConsoleMonitor::new())),
         }
     }
 
@@ -187,18 +196,64 @@ impl BrowserEngine {
         Ok(())
     }
 
-    pub fn start_recording(&mut self, path: &str) {
+    pub fn start_recording(&mut self, name: String, start_url: String) -> Result<(), String> {
         if let Ok(mut recorder) = self.recorder.lock() {
-            recorder.set_save_path(path.to_string());
-            recorder.start();
-            info!("Started recording to {}", path);
+            recorder.start(name.clone(), start_url.clone());
+            info!("Started recording '{}' from URL: {}", name, start_url);
+
+            // Publish event
+            self.publish_event(BrowserEvent::RecordingStarted {
+                name,
+                start_url
+            }).ok();
+
+            Ok(())
+        } else {
+            Err("Failed to lock recorder".to_string())
         }
     }
 
     pub fn stop_recording(&self) -> Result<(), String> {
         if let Ok(mut recorder) = self.recorder.lock() {
-            recorder.stop();
-            info!("Stopped recording");
+            if let Some(recording) = recorder.stop() {
+                info!("Stopped recording: {} ({} events)",
+                    recording.metadata.name,
+                    recording.metadata.event_count);
+
+                // Publish event
+                self.publish_event(BrowserEvent::RecordingStopped {
+                    name: recording.metadata.name,
+                    event_count: recording.metadata.event_count,
+                    duration_ms: recording.metadata.duration_ms,
+                }).ok();
+
+                Ok(())
+            } else {
+                Err("No active recording".to_string())
+            }
+        } else {
+            Err("Failed to lock recorder".to_string())
+        }
+    }
+
+    pub fn pause_recording(&self) -> Result<(), String> {
+        if let Ok(mut recorder) = self.recorder.lock() {
+            recorder.pause();
+            info!("Paused recording");
+
+            self.publish_event(BrowserEvent::RecordingPaused).ok();
+            Ok(())
+        } else {
+            Err("Failed to lock recorder".to_string())
+        }
+    }
+
+    pub fn resume_recording(&self) -> Result<(), String> {
+        if let Ok(mut recorder) = self.recorder.lock() {
+            recorder.resume();
+            info!("Resumed recording");
+
+            self.publish_event(BrowserEvent::RecordingResumed).ok();
             Ok(())
         } else {
             Err("Failed to lock recorder".to_string())
@@ -208,13 +263,45 @@ impl BrowserEngine {
     pub fn save_recording(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
         if let Ok(recorder) = self.recorder.lock() {
             recorder.save(path)?;
+            info!("Saved recording to: {}", path);
+
+            // Publish event
+            self.publish_event(BrowserEvent::RecordingSaved {
+                path: path.to_string()
+            }).ok();
         }
         Ok(())
+    }
+
+    pub fn add_recording_assertion(&self, expected_state: serde_json::Value, description: Option<String>) -> Result<(), String> {
+        if let Ok(mut recorder) = self.recorder.lock() {
+            recorder.add_assertion(expected_state, description);
+            info!("Added assertion to recording");
+            Ok(())
+        } else {
+            Err("Failed to lock recorder".to_string())
+        }
+    }
+
+    pub fn enable_recording_snapshots(&self, interval_ms: u64) -> Result<(), String> {
+        if let Ok(mut recorder) = self.recorder.lock() {
+            recorder.enable_snapshots(interval_ms);
+            info!("Enabled snapshots every {}ms", interval_ms);
+            Ok(())
+        } else {
+            Err("Failed to lock recorder".to_string())
+        }
     }
 
     pub fn load_recording(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
         if let Ok(mut player) = self.player.lock() {
             player.load(path)?;
+            info!("Loaded recording from: {}", path);
+
+            // Publish event
+            self.publish_event(BrowserEvent::RecordingLoaded {
+                path: path.to_string()
+            }).ok();
         }
         Ok(())
     }
@@ -223,6 +310,9 @@ impl BrowserEngine {
         if let Ok(mut player) = self.player.lock() {
             player.start();
             info!("Started replay");
+
+            // Publish event
+            self.publish_event(BrowserEvent::PlaybackStarted).ok();
 
             // Clone necessary handles for the replay thread
             let player = self.player.clone();
@@ -270,6 +360,67 @@ impl BrowserEngine {
         if let Ok(mut player) = self.player.lock() {
             player.stop();
             info!("Stopped replay");
+
+            self.publish_event(BrowserEvent::PlaybackStopped).ok();
+            Ok(())
+        } else {
+            Err("Failed to lock player".to_string())
+        }
+    }
+
+    pub fn pause_replay(&self) -> Result<(), String> {
+        if let Ok(mut player) = self.player.lock() {
+            player.pause();
+            info!("Paused replay");
+
+            self.publish_event(BrowserEvent::PlaybackPaused).ok();
+            Ok(())
+        } else {
+            Err("Failed to lock player".to_string())
+        }
+    }
+
+    pub fn resume_replay(&self) -> Result<(), String> {
+        if let Ok(mut player) = self.player.lock() {
+            player.resume();
+            info!("Resumed replay");
+
+            self.publish_event(BrowserEvent::PlaybackResumed).ok();
+            Ok(())
+        } else {
+            Err("Failed to lock player".to_string())
+        }
+    }
+
+    pub fn seek_replay(&self, timestamp_ms: u64) -> Result<(), String> {
+        if let Ok(mut player) = self.player.lock() {
+            player.seek(timestamp_ms);
+            info!("Seeked to {}ms", timestamp_ms);
+
+            self.publish_event(BrowserEvent::PlaybackSeeked { timestamp_ms }).ok();
+            Ok(())
+        } else {
+            Err("Failed to lock player".to_string())
+        }
+    }
+
+    pub fn step_forward_replay(&self) -> Result<Option<BrowserEvent>, String> {
+        if let Ok(mut player) = self.player.lock() {
+            if let Some(event) = player.step_forward() {
+                info!("Stepped forward to next event");
+                Ok(Some(event))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Err("Failed to lock player".to_string())
+        }
+    }
+
+    pub fn step_backward_replay(&self) -> Result<(), String> {
+        if let Ok(mut player) = self.player.lock() {
+            player.step_backward();
+            info!("Stepped backward to previous event");
             Ok(())
         } else {
             Err("Failed to lock player".to_string())
@@ -279,8 +430,41 @@ impl BrowserEngine {
     pub fn set_replay_speed(&self, speed: f32) -> Result<(), String> {
         if let Ok(mut player) = self.player.lock() {
             player.set_speed(speed);
-            info!("Set replay speed to {}", speed);
+            info!("Set replay speed to {}x", speed);
+
+            self.publish_event(BrowserEvent::PlaybackSpeedChanged { speed }).ok();
             Ok(())
+        } else {
+            Err("Failed to lock player".to_string())
+        }
+    }
+
+    pub fn set_replay_loop(&self, enable: bool) -> Result<(), String> {
+        if let Ok(mut player) = self.player.lock() {
+            player.set_loop(enable);
+            info!("Set replay loop: {}", enable);
+            Ok(())
+        } else {
+            Err("Failed to lock player".to_string())
+        }
+    }
+
+    pub fn get_replay_state(&self) -> Result<serde_json::Value, String> {
+        if let Ok(player) = self.player.lock() {
+            let state = player.get_state();
+            let position = player.get_position();
+            let duration = player.get_duration();
+
+            Ok(serde_json::json!({
+                "state": format!("{:?}", state),
+                "position_ms": position,
+                "duration_ms": duration,
+                "progress": if duration > 0 {
+                    (position as f64 / duration as f64) * 100.0
+                } else {
+                    0.0
+                }
+            }))
         } else {
             Err("Failed to lock player".to_string())
         }
@@ -778,13 +962,223 @@ impl BrowserEngine {
         if let Ok(inspector) = self.dom_inspector.lock() {
             let js_code = inspector.find_all_elements(css_selector);
             let result = self.execute_javascript(&js_code)?;
-            
+
             info!("Finding all elements: {}", css_selector);
-            
+
             // Return mock list of elements
             Ok(vec![])
         } else {
             Err("Failed to lock DOM inspector".to_string())
+        }
+    }
+
+    /// Start performance monitoring
+    pub fn start_performance_monitoring(&self) -> Result<(), String> {
+        if let Ok(mut monitor) = self.performance_monitor.lock() {
+            monitor.start_monitoring();
+            info!("Performance monitoring started");
+
+            // Publish event
+            self.publish_event(BrowserEvent::CommandExecuted {
+                command: "start_performance_monitoring".to_string(),
+                success: true,
+            }).ok();
+
+            Ok(())
+        } else {
+            Err("Failed to lock performance monitor".to_string())
+        }
+    }
+
+    /// Stop performance monitoring
+    pub fn stop_performance_monitoring(&self) -> Result<(), String> {
+        if let Ok(mut monitor) = self.performance_monitor.lock() {
+            monitor.stop_monitoring();
+            info!("Performance monitoring stopped");
+
+            // Publish event
+            self.publish_event(BrowserEvent::CommandExecuted {
+                command: "stop_performance_monitoring".to_string(),
+                success: true,
+            }).ok();
+
+            Ok(())
+        } else {
+            Err("Failed to lock performance monitor".to_string())
+        }
+    }
+
+    /// Collect performance metrics from the current page
+    pub fn collect_performance_metrics(&self) -> Result<serde_json::Value, String> {
+        if let Ok(monitor) = self.performance_monitor.lock() {
+            // Execute the performance collection script
+            let script = monitor.generate_collection_script();
+            let result = self.execute_javascript(&script)?;
+
+            // Parse the result
+            let metrics: serde_json::Value = serde_json::from_str(&result)
+                .unwrap_or_else(|_| serde_json::json!({}));
+
+            info!("Collected performance metrics");
+            Ok(metrics)
+        } else {
+            Err("Failed to lock performance monitor".to_string())
+        }
+    }
+
+    /// Get Core Web Vitals for the current page
+    pub fn get_core_web_vitals(&self) -> Result<CoreWebVitals, String> {
+        // Collect current metrics
+        let metrics = self.collect_performance_metrics()?;
+
+        // Parse Core Web Vitals from the metrics
+        let vitals = CoreWebVitals {
+            lcp: metrics["coreWebVitals"]["lcp"].as_f64(),
+            fid: metrics["coreWebVitals"]["fid"].as_f64(),
+            cls: metrics["coreWebVitals"]["cls"].as_f64(),
+            inp: metrics["coreWebVitals"]["inp"].as_f64(),
+            ttfb: metrics["coreWebVitals"]["ttfb"].as_f64(),
+            fcp: metrics["coreWebVitals"]["fcp"].as_f64(),
+        };
+
+        // Update the monitor with the new vitals
+        if let Ok(mut monitor) = self.performance_monitor.lock() {
+            monitor.update_core_web_vitals(vitals.clone());
+        }
+
+        Ok(vitals)
+    }
+
+    /// Get memory usage metrics
+    pub fn get_memory_metrics(&self) -> Result<MemoryMetrics, String> {
+        let metrics = self.collect_performance_metrics()?;
+
+        let memory = MemoryMetrics {
+            js_heap_size_limit: metrics["memory"]["js_heap_size_limit"].as_u64().unwrap_or(0),
+            total_js_heap_size: metrics["memory"]["total_js_heap_size"].as_u64().unwrap_or(0),
+            used_js_heap_size: metrics["memory"]["used_js_heap_size"].as_u64().unwrap_or(0),
+            dom_node_count: metrics["memory"]["dom_node_count"].as_u64().unwrap_or(0) as u32,
+            event_listener_count: metrics["memory"]["event_listener_count"].as_u64().unwrap_or(0) as u32,
+            detached_node_count: metrics["memory"]["detached_node_count"].as_u64().unwrap_or(0) as u32,
+            timestamp: metrics["memory"]["timestamp"].as_u64().unwrap_or(0),
+        };
+
+        // Add to monitor
+        if let Ok(mut monitor) = self.performance_monitor.lock() {
+            monitor.add_memory_snapshot(memory.clone());
+        }
+
+        Ok(memory)
+    }
+
+    /// Get performance summary
+    pub fn get_performance_summary(&self) -> Result<serde_json::Value, String> {
+        if let Ok(monitor) = self.performance_monitor.lock() {
+            let summary = monitor.get_summary();
+            Ok(serde_json::to_value(summary)
+                .map_err(|e| format!("Failed to serialize performance summary: {}", e))?)
+        } else {
+            Err("Failed to lock performance monitor".to_string())
+        }
+    }
+
+    /// Start JavaScript profiling
+    pub fn start_js_profiling(&self, script_url: String) -> Result<String, String> {
+        if let Ok(mut monitor) = self.performance_monitor.lock() {
+            let profile_id = monitor.start_js_profile(script_url);
+            info!("Started JavaScript profiling: {}", profile_id);
+            Ok(profile_id)
+        } else {
+            Err("Failed to lock performance monitor".to_string())
+        }
+    }
+
+    /// Stop JavaScript profiling
+    pub fn stop_js_profiling(&self) -> Result<Option<JavaScriptProfile>, String> {
+        if let Ok(mut monitor) = self.performance_monitor.lock() {
+            let profile = monitor.stop_js_profile();
+            if let Some(ref p) = profile {
+                info!("Stopped JavaScript profiling: {} ({}ms)", p.id, p.duration);
+            }
+            Ok(profile)
+        } else {
+            Err("Failed to lock performance monitor".to_string())
+        }
+    }
+
+    /// Add a custom performance marker
+    pub fn add_performance_marker(&self, name: String, metadata: Option<HashMap<String, String>>) -> Result<(), String> {
+        if let Ok(mut monitor) = self.performance_monitor.lock() {
+            monitor.add_marker(name, metadata);
+            Ok(())
+        } else {
+            Err("Failed to lock performance monitor".to_string())
+        }
+    }
+
+    /// Add a custom performance measure
+    pub fn add_performance_measure(&self, name: String, start_mark: String, end_mark: String) -> Result<(), String> {
+        if let Ok(mut monitor) = self.performance_monitor.lock() {
+            monitor.add_measure(name, start_mark, end_mark)
+                .map_err(|e| e.to_string())
+        } else {
+            Err("Failed to lock performance monitor".to_string())
+        }
+    }
+
+    /// Start console monitoring
+    pub fn start_console_monitoring(&self) -> Result<(), String> {
+        if let Ok(mut monitor) = self.console_monitor.lock() {
+            monitor.start_monitoring();
+            info!("Console monitoring started");
+
+            // Inject console interceptor script
+            let script = monitor.generate_injection_script();
+            self.execute_javascript(&script)
+                .map(|_| ())
+                .map_err(|e| format!("Failed to inject console interceptor: {}", e))
+        } else {
+            Err("Failed to lock console monitor".to_string())
+        }
+    }
+
+    /// Stop console monitoring
+    pub fn stop_console_monitoring(&self) -> Result<(), String> {
+        if let Ok(mut monitor) = self.console_monitor.lock() {
+            monitor.stop_monitoring();
+            info!("Console monitoring stopped");
+            Ok(())
+        } else {
+            Err("Failed to lock console monitor".to_string())
+        }
+    }
+
+    /// Get console logs, optionally filtered by level
+    pub fn get_console_logs(&self, level: Option<ConsoleLevel>) -> Result<Vec<ConsoleMessage>, String> {
+        if let Ok(monitor) = self.console_monitor.lock() {
+            Ok(monitor.get_messages(level))
+        } else {
+            Err("Failed to lock console monitor".to_string())
+        }
+    }
+
+    /// Clear console logs
+    pub fn clear_console_logs(&self) -> Result<(), String> {
+        if let Ok(mut monitor) = self.console_monitor.lock() {
+            monitor.clear();
+            Ok(())
+        } else {
+            Err("Failed to lock console monitor".to_string())
+        }
+    }
+
+    /// Set console filter level
+    pub fn set_console_filter(&self, level: Option<ConsoleLevel>) -> Result<(), String> {
+        if let Ok(mut monitor) = self.console_monitor.lock() {
+            monitor.set_filter(level);
+            Ok(())
+        } else {
+            Err("Failed to lock console monitor".to_string())
         }
     }
 
@@ -937,6 +1331,215 @@ impl BrowserEngine {
                 if let Ok(mut monitor) = self.network_monitor.lock() {
                     monitor.clear_filters();
                     info!("Network filters cleared");
+                }
+            }
+            // Performance monitoring commands
+            BrowserCommand::StartPerformanceMonitoring => {
+                if let Ok(_) = self.start_performance_monitoring() {
+                    info!("Performance monitoring started via command");
+                }
+            }
+            BrowserCommand::StopPerformanceMonitoring => {
+                if let Ok(_) = self.stop_performance_monitoring() {
+                    info!("Performance monitoring stopped via command");
+                }
+            }
+            BrowserCommand::CollectPerformanceMetrics => {
+                if let Ok(metrics) = self.collect_performance_metrics() {
+                    self.publish_event(BrowserEvent::PerformanceMetricsCollected { metrics }).ok();
+                }
+            }
+            BrowserCommand::GetCoreWebVitals => {
+                if let Ok(vitals) = self.get_core_web_vitals() {
+                    if let Ok(vitals_json) = serde_json::to_value(&vitals) {
+                        self.publish_event(BrowserEvent::CoreWebVitalsUpdated { vitals: vitals_json }).ok();
+                    }
+                    info!("Core Web Vitals collected - Score: {}", vitals.get_score());
+                }
+            }
+            BrowserCommand::GetMemoryMetrics => {
+                if let Ok(memory) = self.get_memory_metrics() {
+                    if let Ok(memory_json) = serde_json::to_value(&memory) {
+                        self.publish_event(BrowserEvent::MemoryMetricsUpdated { metrics: memory_json }).ok();
+                    }
+                    info!("Memory metrics collected - {}% used", memory.heap_usage_percentage());
+                }
+            }
+            BrowserCommand::GetPerformanceSummary => {
+                if let Ok(summary) = self.get_performance_summary() {
+                    info!("Performance summary: {:?}", summary);
+                }
+            }
+            BrowserCommand::StartJSProfiling { script_url } => {
+                if let Ok(profile_id) = self.start_js_profiling(script_url) {
+                    self.publish_event(BrowserEvent::JSProfilingStarted { profile_id }).ok();
+                }
+            }
+            BrowserCommand::StopJSProfiling => {
+                if let Ok(Some(profile)) = self.stop_js_profiling() {
+                    if let Ok(profile_json) = serde_json::to_value(&profile) {
+                        self.publish_event(BrowserEvent::JSProfilingCompleted { profile: profile_json }).ok();
+                    }
+                }
+            }
+            BrowserCommand::AddPerformanceMarker { name, metadata } => {
+                let meta_map = metadata.and_then(|v| {
+                    if let serde_json::Value::Object(map) = v {
+                        Some(map.into_iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+                            .collect())
+                    } else {
+                        None
+                    }
+                });
+
+                if let Ok(_) = self.add_performance_marker(name.clone(), meta_map) {
+                    self.publish_event(BrowserEvent::PerformanceMarkerAdded { name }).ok();
+                }
+            }
+            BrowserCommand::AddPerformanceMeasure { name, start_mark, end_mark } => {
+                if let Ok(_) = self.add_performance_measure(name.clone(), start_mark, end_mark) {
+                    // Get the duration from the monitor
+                    if let Ok(monitor) = self.performance_monitor.lock() {
+                        if let Some(measure) = monitor.get_measures().last() {
+                            self.publish_event(BrowserEvent::PerformanceMeasureAdded {
+                                name,
+                                duration: measure.duration
+                            }).ok();
+                        }
+                    }
+                }
+            }
+            // Console monitoring commands
+            BrowserCommand::StartConsoleMonitoring => {
+                if let Ok(_) = self.start_console_monitoring() {
+                    info!("Console monitoring started via command");
+                }
+            }
+            BrowserCommand::StopConsoleMonitoring => {
+                if let Ok(_) = self.stop_console_monitoring() {
+                    info!("Console monitoring stopped via command");
+                }
+            }
+            BrowserCommand::GetConsoleLogs { level } => {
+                let console_level = level.as_ref().and_then(|l| ConsoleLevel::from_str(l));
+                if let Ok(logs) = self.get_console_logs(console_level) {
+                    // Publish console messages as events
+                    for log in logs {
+                        self.publish_event(BrowserEvent::ConsoleMessage {
+                            level: log.level.as_str().to_string(),
+                            message: log.message,
+                            timestamp: log.timestamp,
+                            stack_trace: log.stack_trace,
+                        }).ok();
+                    }
+                }
+            }
+            BrowserCommand::ClearConsoleLogs => {
+                if let Ok(_) = self.clear_console_logs() {
+                    self.publish_event(BrowserEvent::ConsoleCleared).ok();
+                    info!("Console logs cleared via command");
+                }
+            }
+            BrowserCommand::SetConsoleFilter { level } => {
+                let console_level = level.as_ref().and_then(|l| ConsoleLevel::from_str(l));
+                if let Ok(_) = self.set_console_filter(console_level) {
+                    info!("Console filter set via command");
+                }
+            }
+            // Recording/Replay commands
+            BrowserCommand::StartRecording { name, start_url } => {
+                if let Ok(_) = self.start_recording(name, start_url) {
+                    info!("Recording started via command");
+                }
+            }
+            BrowserCommand::StopRecording => {
+                if let Ok(_) = self.stop_recording() {
+                    info!("Recording stopped via command");
+                }
+            }
+            BrowserCommand::PauseRecording => {
+                if let Ok(_) = self.pause_recording() {
+                    info!("Recording paused via command");
+                }
+            }
+            BrowserCommand::ResumeRecording => {
+                if let Ok(_) = self.resume_recording() {
+                    info!("Recording resumed via command");
+                }
+            }
+            BrowserCommand::SaveRecording { path } => {
+                if let Ok(_) = self.save_recording(&path) {
+                    info!("Recording saved to: {}", path);
+                }
+            }
+            BrowserCommand::LoadRecording { path } => {
+                if let Ok(_) = self.load_recording(&path) {
+                    info!("Recording loaded from: {}", path);
+                }
+            }
+            BrowserCommand::AddRecordingAssertion { expected_state, description } => {
+                if let Ok(_) = self.add_recording_assertion(expected_state, description) {
+                    info!("Assertion added to recording via command");
+                }
+            }
+            BrowserCommand::EnableRecordingSnapshots { interval_ms } => {
+                if let Ok(_) = self.enable_recording_snapshots(interval_ms) {
+                    info!("Recording snapshots enabled via command");
+                }
+            }
+            BrowserCommand::StartPlayback => {
+                if let Ok(_) = self.start_replay() {
+                    info!("Playback started via command");
+                }
+            }
+            BrowserCommand::StopPlayback => {
+                if let Ok(_) = self.stop_replay() {
+                    info!("Playback stopped via command");
+                }
+            }
+            BrowserCommand::PausePlayback => {
+                if let Ok(_) = self.pause_replay() {
+                    info!("Playback paused via command");
+                }
+            }
+            BrowserCommand::ResumePlayback => {
+                if let Ok(_) = self.resume_replay() {
+                    info!("Playback resumed via command");
+                }
+            }
+            BrowserCommand::SeekPlayback { timestamp_ms } => {
+                if let Ok(_) = self.seek_replay(timestamp_ms) {
+                    info!("Playback seeked to {}ms via command", timestamp_ms);
+                }
+            }
+            BrowserCommand::StepForward => {
+                if let Ok(Some(event)) = self.step_forward_replay() {
+                    info!("Stepped forward, playing event: {:?}", event);
+                    // Play the event
+                    if let Ok(mut recorder) = self.recorder.lock() {
+                        recorder.record_event(event);
+                    }
+                }
+            }
+            BrowserCommand::StepBackward => {
+                if let Ok(_) = self.step_backward_replay() {
+                    info!("Stepped backward via command");
+                }
+            }
+            BrowserCommand::SetPlaybackSpeed { speed } => {
+                if let Ok(_) = self.set_replay_speed(speed) {
+                    info!("Playback speed set to {}x via command", speed);
+                }
+            }
+            BrowserCommand::SetPlaybackLoop { enable } => {
+                if let Ok(_) = self.set_replay_loop(enable) {
+                    info!("Playback loop set to {} via command", enable);
+                }
+            }
+            BrowserCommand::GetPlaybackState => {
+                if let Ok(state) = self.get_replay_state() {
+                    info!("Playback state: {:?}", state);
                 }
             }
         }
@@ -1251,6 +1854,7 @@ impl Clone for BrowserEngine {
             visual_tester: self.visual_tester.clone(),
             dom_inspector: self.dom_inspector.clone(),
             network_monitor: self.network_monitor.clone(),
+            performance_monitor: self.performance_monitor.clone(),
         }
     }
 }

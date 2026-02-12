@@ -52,6 +52,7 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
 - 🛠️ Run `cargo build`
 - 🚀 Start with `cargo run -- --url https://example.com`
 - 🌐 Start with API: `cargo run -- --api` (runs on http://127.0.0.1:3003)
+- 🤖 Start with MCP: `cargo run -- --mcp` (Model Context Protocol for AI agents)
 
 See [Getting Started Guide](docs/getting-started.md) for detailed setup.
 
@@ -88,6 +89,51 @@ Tinker provides a comprehensive REST API for automation and testing:
 
 ### Real-time Control
 - `WS /ws` - WebSocket for real-time events and control
+
+## MCP Server (AI Agent Control)
+
+Tinker includes a Model Context Protocol (MCP) server that allows AI agents like Claude to directly control the browser. The MCP server implements JSON-RPC 2.0 over stdio.
+
+### Quick Start
+
+```bash
+# Start in MCP mode
+cargo run -- --mcp --url https://example.com
+
+# Or combine with API server
+cargo run -- --mcp --api --url https://example.com
+```
+
+### Claude Desktop Integration
+
+Add to your Claude Desktop configuration:
+
+```json
+{
+  "mcpServers": {
+    "tinker-browser": {
+      "command": "cargo",
+      "args": ["run", "--", "--mcp", "--url", "https://example.com"],
+      "cwd": "/path/to/tinker"
+    }
+  }
+}
+```
+
+Then ask Claude to control the browser:
+- "Navigate to rust-lang.org and take a screenshot"
+- "Find the search button and click it"
+- "Execute JavaScript to get the page title"
+
+### Available MCP Tools
+
+- **Navigation**: navigate, create_tab, close_tab, switch_tab
+- **Visual Testing**: take_screenshot, create_visual_baseline, run_visual_test
+- **DOM Interaction**: find_element, click_element, type_text
+- **JavaScript**: execute_javascript, get_page_info
+- **Network**: start_network_monitoring, stop_network_monitoring, get_network_stats, export_network_har
+
+See [MCP Server Documentation](docs/mcp-server.md) for complete details.
 
 ## Documentation
 - [Contributing](CONTRIBUTING.md) - Join the guild! Includes detailed architecture guide

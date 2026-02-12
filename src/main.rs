@@ -5,6 +5,7 @@ use std::{sync::{Arc, Mutex}, env};
 mod api;
 mod browser;
 mod event;
+mod mcp;
 mod templates;
 
 use crate::{
@@ -58,6 +59,10 @@ struct Args {
     /// API server port
     #[arg(long, default_value = "3003")]
     api_port: u16,
+
+    /// Enable MCP server (Model Context Protocol over stdio)
+    #[arg(long)]
+    mcp: bool,
 }
 
 #[tokio::main]
@@ -83,15 +88,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let args = Args::parse();
 
-    // Create broadcast channels for API server if enabled
-    let (api_event_tx, api_event_rx) = if args.api {
+    // Create broadcast channels for API server or MCP server if enabled
+    let (api_event_tx, api_event_rx) = if args.api || args.mcp {
         let (tx, rx) = tokio::sync::broadcast::channel(1000);
         (Some(tx), Some(rx))
     } else {
         (None, None)
     };
 
-    let (api_command_tx, api_command_rx) = if args.api {
+    let (api_command_tx, api_command_rx) = if args.api || args.mcp {
         let (tx, rx) = tokio::sync::broadcast::channel(100);
         (Some(tx), Some(rx))
     } else {
@@ -112,11 +117,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    // Get initial URL (default to about:blank if not provided)
+    let initial_url = args.url.or_else(|| Some("about:blank".to_string()));
+
     // Create browser instance with default URL if none provided
     let mut browser = BrowserEngine::new(
         args.headless,
         events.clone(),
-        args.url.or_else(|| Some("about:blank".to_string())),
+        initial_url.clone(),
     );
 
     // Connect to event system after browser is initialized
@@ -138,8 +146,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start recording if enabled
     if args.record {
         if let Some(path) = args.record_path.as_deref() {
-            browser.start_recording(path);
-            info!("Recording will be saved to {}", path);
+            // Generate recording name from path
+            let name = std::path::Path::new(path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("recording")
+                .to_string();
+
+            // Use the initial URL
+            let start_url = initial_url.clone().unwrap_or_else(|| "about:blank".to_string());
+
+            if let Err(e) = browser.start_recording(name, start_url) {
+                error!("Failed to start recording: {}", e);
+            } else {
+                info!("Recording started, will be saved to {}", path);
+            }
         } else {
             return Err("--record-path is required when --record is specified".into());
         }
@@ -159,13 +180,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Replaying events from {}", path);
     }
 
-    // Start API server if enabled
-    if args.api {
-        if let (Some(command_tx), Some(event_rx)) = (api_command_tx, api_event_rx) {
+    // Start API server and/or MCP server if enabled
+    if let (Some(command_tx), Some(mut event_rx)) = (api_command_tx, api_event_rx) {
+        // Start API server if enabled
+        if args.api {
+            let command_tx_clone = command_tx.clone();
+            let event_rx_clone = event_rx.resubscribe();
             info!("🚀 Starting API server on port {}", args.api_port);
             tokio::spawn(async move {
-                if let Err(e) = api::start_api_server(command_tx, event_rx).await {
+                if let Err(e) = api::start_api_server(command_tx_clone, event_rx_clone).await {
                     error!("API server error: {}", e);
+                }
+            });
+        }
+
+        // Start MCP server if enabled
+        if args.mcp {
+            let command_tx_clone = command_tx.clone();
+            let event_rx_clone = event_rx.resubscribe();
+            info!("🚀 Starting MCP server on stdio");
+            info!("📡 MCP server ready for JSON-RPC protocol messages");
+
+            // MCP server must run on a separate thread since it blocks on stdin
+            std::thread::spawn(move || {
+                let mut mcp_server = mcp::McpServer::new(command_tx_clone, event_rx_clone);
+                if let Err(e) = mcp_server.run() {
+                    error!("MCP server error: {}", e);
                 }
             });
         }
