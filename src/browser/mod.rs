@@ -1855,6 +1855,7 @@ impl Clone for BrowserEngine {
             dom_inspector: self.dom_inspector.clone(),
             network_monitor: self.network_monitor.clone(),
             performance_monitor: self.performance_monitor.clone(),
+            console_monitor: self.console_monitor.clone(),
         }
     }
 }

@@ -1052,3 +1052,67 @@ async fn get_playback_state(
         Err(e) => Json(ApiResponse::error(format!("Failed to get playback state: {}", e))),
     }
 }
+
+// Console monitoring handlers
+
+async fn start_console_monitoring(
+    State(state): State<ApiState>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Start console monitoring");
+
+    let command = BrowserCommand::StartConsoleMonitoring;
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Console monitoring started".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to start console monitoring: {}", e))),
+    }
+}
+
+async fn stop_console_monitoring(
+    State(state): State<ApiState>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Stop console monitoring");
+
+    let command = BrowserCommand::StopConsoleMonitoring;
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Console monitoring stopped".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to stop console monitoring: {}", e))),
+    }
+}
+
+async fn get_console_logs(
+    State(state): State<ApiState>,
+    Json(request): Json<GetConsoleLogsRequest>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Get console logs");
+
+    let command = BrowserCommand::GetConsoleLogs { level: request.level };
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Console logs command sent".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to get console logs: {}", e))),
+    }
+}
+
+async fn clear_console_logs(
+    State(state): State<ApiState>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Clear console logs");
+
+    let command = BrowserCommand::ClearConsoleLogs;
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Console logs cleared".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to clear console logs: {}", e))),
+    }
+}
+
+async fn set_console_filter(
+    State(state): State<ApiState>,
+    Json(request): Json<SetConsoleFilterRequest>,
+) -> Json<ApiResponse<String>> {
+    debug!("API: Set console filter");
+
+    let command = BrowserCommand::SetConsoleFilter { level: request.level };
+    match state.command_tx.send(command) {
+        Ok(_) => Json(ApiResponse::success("Console filter set".to_string())),
+        Err(e) => Json(ApiResponse::error(format!("Failed to set console filter: {}", e))),
+    }
+}
