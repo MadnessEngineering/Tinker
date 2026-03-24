@@ -472,6 +472,11 @@ impl BrowserEngine {
 
     pub fn run(&mut self) -> Result<(), WebViewError> {
         debug!("Starting browser engine");
+
+        if self.headless {
+            return self.run_headless();
+        }
+
         let event_loop = EventLoop::new();
         debug!("Created event loop: {:?}", event_loop);
 
@@ -603,9 +608,36 @@ impl BrowserEngine {
         });
     }
 
+    fn run_headless(&mut self) -> Result<(), WebViewError> {
+        info!("Running in headless mode");
+
+        // Create initial tab only if none have been pre-created (e.g. via --tabs)
+        let has_tabs = self.tabs.lock()
+            .map(|t| !t.get_all_tabs().is_empty())
+            .unwrap_or(false);
+
+        if !has_tabs {
+            let url = self.initial_url.clone().unwrap_or_else(|| "about:blank".to_string());
+            let mut tabs = self.tabs.lock()
+                .map_err(|_| WebViewError::LockError("Failed to lock tabs".to_string()))?;
+            let id = tabs.create_tab(url);
+            tabs.switch_to_tab(id);
+        }
+
+        // Navigate to initial URL (this logs "Navigating to: ...")
+        if let Some(url) = self.initial_url.clone() {
+            self.navigate(&url)
+                .map_err(|e| WebViewError::GenericError(e))?;
+        }
+
+        Ok(())
+    }
+
     pub fn create_tab(&mut self, url: &str) -> Result<usize, WebViewError> {
-        // Create the tab in the manager
-        let id = if let Ok(mut tabs) = self.tabs.lock() {
+        // Create the tab in the manager — release lock before calling update_tab_visibility
+        let (id, is_first) = {
+            let mut tabs = self.tabs.lock()
+                .map_err(|_| WebViewError::LockError("Failed to lock tab manager".to_string()))?;
             let id = tabs.create_tab(url.to_string());
 
             // Update the tab bar
@@ -619,38 +651,37 @@ impl BrowserEngine {
                 url: url.to_string()
             }).map_err(|e| WebViewError::GenericError(e.to_string()))?;
 
-            // If this is the first tab, make it active
-            if tabs.get_all_tabs().len() == 1 {
+            let is_first = tabs.get_all_tabs().len() == 1;
+            if is_first {
                 tabs.switch_to_tab(id);
-                self.update_tab_visibility()?;
-                self.publish_event(BrowserEvent::TabActivated { id })
-                    .map_err(|e| WebViewError::GenericError(e.to_string()))?;
             }
+            (id, is_first)
+        }; // tabs lock released here
 
-            Ok(id)
-        } else {
-            Err(WebViewError::LockError("Failed to lock tab manager".to_string()))
-        }?;
+        if is_first {
+            self.update_tab_visibility()?;
+            self.publish_event(BrowserEvent::TabActivated { id })
+                .map_err(|e| WebViewError::GenericError(e.to_string()))?;
+        }
 
         Ok(id)
     }
 
     pub fn switch_to_tab(&mut self, id: usize) -> Result<(), WebViewError> {
-        // First switch the tab in the manager
-        if let Ok(mut tabs) = self.tabs.lock() {
-            if tabs.switch_to_tab(id) {
-                // Update WebView content and tab bar
-                self.update_tab_visibility()?;
+        // Switch in manager — release lock before calling update_tab_visibility
+        let switched = {
+            let mut tabs = self.tabs.lock()
+                .map_err(|_| WebViewError::LockError("Failed to lock tabs".to_string()))?;
+            tabs.switch_to_tab(id)
+        }; // tabs lock released here
 
-                // Publish tab activated event
-                self.publish_event(BrowserEvent::TabActivated { id })
-                    .map_err(|e| WebViewError::GenericError(e.to_string()))?;
-                Ok(())
-            } else {
-                Err(WebViewError::TabError(format!("Failed to switch to tab {}", id)))
-            }
+        if switched {
+            self.update_tab_visibility()?;
+            self.publish_event(BrowserEvent::TabActivated { id })
+                .map_err(|e| WebViewError::GenericError(e.to_string()))?;
+            Ok(())
         } else {
-            Err(WebViewError::LockError("Failed to lock tabs".to_string()))
+            Err(WebViewError::TabError(format!("Failed to switch to tab {}", id)))
         }
     }
 

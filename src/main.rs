@@ -143,6 +143,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // In headless mode, pre-create tabs so run_headless() sees them
+    if args.headless {
+        if let Some(tab_count) = args.tabs {
+            for _ in 0..tab_count {
+                let url = initial_url.clone().unwrap_or_else(|| "about:blank".to_string());
+                if let Err(e) = browser.create_tab(&url) {
+                    error!("Failed to create tab: {}", e);
+                } else {
+                    info!("Created new tab");
+                }
+            }
+        }
+    }
+
     // Start recording if enabled
     if args.record {
         if let Some(path) = args.record_path.as_deref() {
@@ -159,7 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = browser.start_recording(name, start_url) {
                 error!("Failed to start recording: {}", e);
             } else {
-                info!("Recording started, will be saved to {}", path);
+                info!("Recording will be saved to {}", path);
             }
         } else {
             return Err("--record-path is required when --record is specified".into());
@@ -220,6 +234,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Browser engine must run on main thread (platform requirement)
     // API server runs in background tokio tasks - this is correct!
     browser.run()?;
+
+    // Reached only in headless mode (GUI event loop never returns).
+    // Save then stop recording if one was active (save first — stop moves recording out of the struct).
+    if args.record {
+        if let Some(path) = args.record_path.as_deref() {
+            if let Err(e) = browser.save_recording(path) {
+                error!("Failed to save recording: {}", e);
+            }
+            if let Err(e) = browser.stop_recording() {
+                error!("Failed to stop recording: {}", e);
+            }
+        }
+    }
 
     info!("👋 Tinker Workshop shutting down...");
     Ok(())

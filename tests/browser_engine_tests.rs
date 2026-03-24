@@ -90,15 +90,16 @@ fn test_event_system() {
 
     // Test tab creation events
     let tab_id = browser.create_tab("https://example.com").unwrap();
-    
+    let tab2_id = browser.create_tab("https://example.com/tab2").unwrap();
+
     // Test tab switching events
     browser.switch_to_tab(tab_id).unwrap();
-    
+
     // Test navigation events
     browser.navigate("https://example.com/page2").unwrap();
-    
-    // Test tab closing events
-    browser.close_tab(tab_id).unwrap();
+
+    // Test tab closing events (need >1 tab to close one)
+    browser.close_tab(tab2_id).unwrap();
 }
 
 #[test]

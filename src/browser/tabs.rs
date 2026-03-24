@@ -92,6 +92,9 @@ impl TabManager {
     }
 
     pub fn close_tab(&mut self, id: usize) -> bool {
+        if self.tabs.len() <= 1 {
+            return false;
+        }
         if self.tabs.remove(&id).is_some() {
             if Some(id) == self.active_tab {
                 self.active_tab = self.tabs.keys().next().copied();
