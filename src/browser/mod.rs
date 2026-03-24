@@ -144,13 +144,13 @@ impl BrowserEngine {
     pub fn navigate(&self, url: &str) -> Result<(), String> {
         info!("Navigating to: {}", url);
 
-        // Update the tab URL first
+        // Push URL into active tab's history and update URL
         if let Ok(mut tabs) = self.tabs.lock() {
-            if let Some(tab) = tabs.get_active_tab_mut() {
-                tab.url = url.to_string();
-                // Publish URL changed event
+            let active_id = tabs.get_active_tab().map(|t| t.id);
+            if let Some(id) = active_id {
+                tabs.push_history(id, url.to_string());
                 self.publish_event(BrowserEvent::TabUrlChanged {
-                    id: tab.id,
+                    id,
                     url: url.to_string(),
                 })?;
             }
@@ -179,6 +179,44 @@ impl BrowserEngine {
         })?;
 
         Ok(())
+    }
+
+    pub fn go_back(&self) -> Result<Option<String>, String> {
+        let url = if let Ok(mut tabs) = self.tabs.lock() {
+            let active_id = tabs.get_active_tab().map(|t| t.id);
+            active_id.and_then(|id| tabs.go_back(id))
+        } else {
+            return Err("Failed to lock tabs".to_string());
+        };
+        if let Some(ref url) = url {
+            if let Some(view) = &self.content_view {
+                if let Ok(view) = view.lock() {
+                    view.load_url(url);
+                }
+            }
+            self.publish_event(BrowserEvent::Navigation { url: url.clone() }).ok();
+            info!("Navigating back to: {}", url);
+        }
+        Ok(url)
+    }
+
+    pub fn go_forward(&self) -> Result<Option<String>, String> {
+        let url = if let Ok(mut tabs) = self.tabs.lock() {
+            let active_id = tabs.get_active_tab().map(|t| t.id);
+            active_id.and_then(|id| tabs.go_forward(id))
+        } else {
+            return Err("Failed to lock tabs".to_string());
+        };
+        if let Some(ref url) = url {
+            if let Some(view) = &self.content_view {
+                if let Ok(view) = view.lock() {
+                    view.load_url(url);
+                }
+            }
+            self.publish_event(BrowserEvent::Navigation { url: url.clone() }).ok();
+            info!("Navigating forward to: {}", url);
+        }
+        Ok(url)
     }
 
     pub fn get_active_tab(&self) -> Option<String> {
@@ -1853,7 +1891,19 @@ impl BrowserEngine {
                                     self.switch_to_tab(id).map_err(|e| e.to_string())?;
                                 }
                             }
-                            _ => {} // Ignore other commands for now
+                            KeyCommand::Back => {
+                                debug!("Navigating back");
+                                if let Err(e) = self.go_back() {
+                                    error!("Failed to go back: {}", e);
+                                }
+                            }
+                            KeyCommand::Forward => {
+                                debug!("Navigating forward");
+                                if let Err(e) = self.go_forward() {
+                                    error!("Failed to go forward: {}", e);
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
