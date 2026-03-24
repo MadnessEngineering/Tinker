@@ -60,7 +60,7 @@ use self::{
     tabs::TabManager,
     event_viewer::EventViewer,
     tab_ui::{TabBar, TabCommand},
-    replay::{EventRecorder, EventPlayer},
+    replay::{EventRecorder, EventPlayer, PlaybackState},
     visual::{VisualTester, ScreenshotOptions, ScreenshotResult},
     inspector::{DOMInspector, ElementSelector, InteractionType, ElementInfo, WaitCondition},
     network::{NetworkMonitor, NetworkRequest, NetworkResponse, NetworkFilter},
@@ -122,6 +122,11 @@ impl BrowserEngine {
     }
 
     fn publish_event(&self, event: BrowserEvent) -> Result<(), String> {
+        // Feed the recorder if recording is active
+        if let Ok(mut recorder) = self.recorder.lock() {
+            recorder.record_event(event.clone());
+        }
+
         // First, add to event viewer for monitoring
         if let Ok(mut viewer) = self.event_viewer.lock() {
             viewer.add_event(event.clone());
@@ -239,39 +244,37 @@ impl BrowserEngine {
         if let Ok(mut recorder) = self.recorder.lock() {
             recorder.start(name.clone(), start_url.clone());
             info!("Started recording '{}' from URL: {}", name, start_url);
-
-            // Publish event
-            self.publish_event(BrowserEvent::RecordingStarted {
-                name,
-                start_url
-            }).ok();
-
-            Ok(())
         } else {
-            Err("Failed to lock recorder".to_string())
+            return Err("Failed to lock recorder".to_string());
         }
+        // Publish AFTER releasing recorder lock (publish_event also locks recorder)
+        self.publish_event(BrowserEvent::RecordingStarted { name, start_url }).ok();
+        Ok(())
     }
 
     pub fn stop_recording(&self) -> Result<(), String> {
-        if let Ok(mut recorder) = self.recorder.lock() {
+        let result = if let Ok(mut recorder) = self.recorder.lock() {
             if let Some(recording) = recorder.stop() {
                 info!("Stopped recording: {} ({} events)",
                     recording.metadata.name,
                     recording.metadata.event_count);
-
-                // Publish event
-                self.publish_event(BrowserEvent::RecordingStopped {
-                    name: recording.metadata.name,
-                    event_count: recording.metadata.event_count,
-                    duration_ms: recording.metadata.duration_ms,
-                }).ok();
-
-                Ok(())
+                Ok(Some((
+                    recording.metadata.name.clone(),
+                    recording.metadata.event_count,
+                    recording.metadata.duration_ms,
+                )))
             } else {
                 Err("No active recording".to_string())
             }
         } else {
             Err("Failed to lock recorder".to_string())
+        };
+        // Publish AFTER releasing recorder lock
+        if let Ok(Some((name, event_count, duration_ms))) = result {
+            self.publish_event(BrowserEvent::RecordingStopped { name, event_count, duration_ms }).ok();
+            Ok(())
+        } else {
+            result.map(|_| ())
         }
     }
 
@@ -279,36 +282,31 @@ impl BrowserEngine {
         if let Ok(mut recorder) = self.recorder.lock() {
             recorder.pause();
             info!("Paused recording");
-
-            self.publish_event(BrowserEvent::RecordingPaused).ok();
-            Ok(())
         } else {
-            Err("Failed to lock recorder".to_string())
+            return Err("Failed to lock recorder".to_string());
         }
+        self.publish_event(BrowserEvent::RecordingPaused).ok();
+        Ok(())
     }
 
     pub fn resume_recording(&self) -> Result<(), String> {
         if let Ok(mut recorder) = self.recorder.lock() {
             recorder.resume();
             info!("Resumed recording");
-
-            self.publish_event(BrowserEvent::RecordingResumed).ok();
-            Ok(())
         } else {
-            Err("Failed to lock recorder".to_string())
+            return Err("Failed to lock recorder".to_string());
         }
+        self.publish_event(BrowserEvent::RecordingResumed).ok();
+        Ok(())
     }
 
     pub fn save_recording(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
         if let Ok(recorder) = self.recorder.lock() {
             recorder.save(path)?;
             info!("Saved recording to: {}", path);
-
-            // Publish event
-            self.publish_event(BrowserEvent::RecordingSaved {
-                path: path.to_string()
-            }).ok();
         }
+        // Publish AFTER releasing recorder lock
+        self.publish_event(BrowserEvent::RecordingSaved { path: path.to_string() }).ok();
         Ok(())
     }
 
@@ -365,31 +363,41 @@ impl BrowserEngine {
                 None
             };
 
+            // In GUI mode: spawn a thread that forwards events via the command channel.
+            // In headless mode (no cmd_tx): run_headless() polls the player directly.
             if let Some(cmd_tx) = cmd_tx {
-                // Spawn replay thread
                 std::thread::spawn(move || {
-                    let mut last_check = Instant::now();
-                    while let Ok(mut player) = player.lock() {
-                        if let Some(event) = player.next_event() {
+                    loop {
+                        let (should_break, next_event) = match player.lock() {
+                            Ok(mut p) => {
+                                let state = p.get_state();
+                                if state == PlaybackState::Completed || state == PlaybackState::Stopped {
+                                    (true, None)
+                                } else {
+                                    (false, p.next_event())
+                                }
+                            }
+                            Err(_) => (true, None),
+                        };
+
+                        if should_break {
+                            break;
+                        }
+
+                        if let Some(event) = next_event {
                             if let Err(e) = cmd_tx.send(BrowserCommand::PlayEvent { event }) {
                                 error!("Failed to send replay event: {}", e);
                                 break;
                             }
-                        }
-
-                        // Sleep a bit to prevent busy waiting
-                        if last_check.elapsed() < Duration::from_millis(10) {
+                        } else {
                             std::thread::sleep(Duration::from_millis(1));
                         }
-                        last_check = Instant::now();
                     }
                     info!("Replay completed");
                 });
-
-                Ok(())
-            } else {
-                Err("No command sender available".to_string())
             }
+
+            Ok(())
         } else {
             Err("Failed to lock player".to_string())
         }
@@ -485,6 +493,32 @@ impl BrowserEngine {
             Ok(())
         } else {
             Err("Failed to lock player".to_string())
+        }
+    }
+
+    /// Execute a single BrowserEvent against the browser (used during replay).
+    fn execute_event(&mut self, event: BrowserEvent) -> Result<(), String> {
+        match event {
+            BrowserEvent::Navigation { url } => {
+                debug!("Replay: navigate to {}", url);
+                self.navigate(&url)
+            }
+            BrowserEvent::TabCreated { url, .. } => {
+                debug!("Replay: create tab {}", url);
+                self.create_tab(&url).map(|_| ()).map_err(|e| e.to_string())
+            }
+            BrowserEvent::TabClosed { id } => {
+                debug!("Replay: close tab {}", id);
+                self.close_tab(id).map_err(|e| e.to_string())
+            }
+            BrowserEvent::TabActivated { id } => {
+                debug!("Replay: activate tab {}", id);
+                self.switch_to_tab(id).map_err(|e| e.to_string())
+            }
+            _ => {
+                debug!("Replay: skipping informational event {:?}", event);
+                Ok(())
+            }
         }
     }
 
@@ -667,6 +701,38 @@ impl BrowserEngine {
         if let Some(url) = self.initial_url.clone() {
             self.navigate(&url)
                 .map_err(|e| WebViewError::GenericError(e))?;
+        }
+
+        // Drive the replay player if it was started before run() was called.
+        // Lock briefly to get state + next event, then release before executing.
+        loop {
+            let (state, next_event) = if let Ok(mut player) = self.player.lock() {
+                let state = player.get_state();
+                let next = if state == PlaybackState::Playing {
+                    player.next_event()
+                } else {
+                    None
+                };
+                (state, next)
+            } else {
+                break;
+            };
+
+            match state {
+                PlaybackState::Playing => {
+                    if let Some(event) = next_event {
+                        if let Err(e) = self.execute_event(event) {
+                            error!("Replay event execution failed: {}", e);
+                        }
+                    } else {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                }
+                PlaybackState::Paused => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                PlaybackState::Completed | PlaybackState::Stopped => break,
+            }
         }
 
         Ok(())
@@ -1331,8 +1397,8 @@ impl BrowserEngine {
                 }
             }
             BrowserCommand::PlayEvent { event } => {
-                if let Ok(mut player) = self.player.lock() {
-                    player.play_event(event);
+                if let Err(e) = self.execute_event(event) {
+                    error!("Replay event execution failed: {}", e);
                 }
             }
             BrowserCommand::TakeScreenshot { options } => {
