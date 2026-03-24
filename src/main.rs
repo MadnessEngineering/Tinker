@@ -9,7 +9,7 @@ mod mcp;
 mod templates;
 
 use crate::{
-    browser::BrowserEngine,
+    browser::{BrowserEngine, session::default_session_path},
     event::EventSystem,
 };
 
@@ -63,6 +63,10 @@ struct Args {
     /// Enable MCP server (Model Context Protocol over stdio)
     #[arg(long)]
     mcp: bool,
+
+    /// Do not restore the previous session on startup
+    #[arg(long)]
+    no_restore_session: bool,
 }
 
 #[tokio::main]
@@ -118,6 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Get initial URL (default to about:blank if not provided)
+    let url_explicitly_provided = args.url.is_some();
     let initial_url = args.url.or_else(|| Some("about:blank".to_string()));
 
     // Create browser instance with default URL if none provided
@@ -140,6 +145,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     info!("Connected to event broker and subscribed to events");
                 }
             }
+        }
+    }
+
+    // Restore previous session unless a URL was explicitly provided or the flag is set
+    let session_path = default_session_path();
+    if !args.no_restore_session && !url_explicitly_provided && !args.headless {
+        if let Err(e) = browser.restore_session(&session_path) {
+            error!("Failed to restore session: {}", e);
         }
     }
 
@@ -234,6 +247,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Browser engine must run on main thread (platform requirement)
     // API server runs in background tokio tasks - this is correct!
     browser.run()?;
+
+    // Reached only in headless mode (GUI event loop never returns).
+    // Save session so the next launch can restore tabs.
+    if !args.headless && !args.no_restore_session {
+        if let Err(e) = browser.save_session(&session_path) {
+            error!("Failed to save session: {}", e);
+        }
+    }
 
     // Reached only in headless mode (GUI event loop never returns).
     // Save then stop recording if one was active (save first — stop moves recording out of the struct).

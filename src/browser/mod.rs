@@ -54,6 +54,7 @@ mod network;
 mod performance;
 mod console;
 pub mod keyboard;
+pub mod session;
 
 use self::{
     tabs::TabManager,
@@ -754,6 +755,53 @@ impl BrowserEngine {
             self.switch_to_tab(next_id)?;
         }
 
+        Ok(())
+    }
+
+    /// Save current tabs to a session file.
+    pub fn save_session(&self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        use session::{Session, SavedTab, save_session};
+        let tabs_snapshot = self.tabs.lock()
+            .map_err(|_| "Failed to lock tabs")?;
+        let active_id = tabs_snapshot.get_active_tab().map(|t| t.id);
+        let all_tabs = tabs_snapshot.get_all_tabs();
+        let saved_tabs: Vec<SavedTab> = all_tabs.iter().map(|t| SavedTab {
+            url: t.url.clone(),
+            title: t.title.clone(),
+        }).collect();
+        // Determine active index by position in the collected vec
+        let active_index = all_tabs.iter()
+            .position(|t| Some(t.id) == active_id)
+            .unwrap_or(0);
+        let session = Session { tabs: saved_tabs, active_index };
+        save_session(&session, path)
+    }
+
+    /// Restore tabs from a session file, replacing any existing tabs.
+    pub fn restore_session(&mut self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        use session::load_session;
+        let session = match load_session(path) {
+            Some(s) if !s.tabs.is_empty() => s,
+            _ => return Ok(()),
+        };
+        // Create a tab for each saved entry
+        let mut last_id = None;
+        for (i, saved) in session.tabs.iter().enumerate() {
+            let id = self.create_tab(&saved.url)?;
+            if !saved.title.is_empty() {
+                if let Ok(mut tabs) = self.tabs.lock() {
+                    tabs.update_tab_title(id, saved.title.clone());
+                }
+            }
+            if i == session.active_index {
+                last_id = Some(id);
+            }
+        }
+        // Switch to the previously active tab
+        if let Some(id) = last_id {
+            self.switch_to_tab(id).ok();
+        }
+        info!("Session restored: {} tab(s)", session.tabs.len());
         Ok(())
     }
 
