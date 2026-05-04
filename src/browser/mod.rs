@@ -643,40 +643,24 @@ impl BrowserEngine {
                         error!("Failed to lock browser in event loop");
                     }
                 }
-                Event::MainEventsCleared => {
-                    debug!("Main events cleared");
-                    window.request_redraw();
-                }
+                Event::MainEventsCleared => {}
                 Event::RedrawRequested(_) => {
-                    debug!("Redraw requested");
                     if let Ok(browser) = browser.lock() {
                         if let Some(window) = &browser.window {
-                            debug!("Window state - size: {:?}, visible: {}, position: {:?}",
-                                window.inner_size(),
-                                window.is_visible(),
-                                window.outer_position().unwrap_or_default()
-                            );
-                            // Ensure window is visible and focused
                             if !window.is_visible() {
                                 window.set_visible(true);
                                 window.set_focus();
-                                debug!("Forced window visibility and focus");
                             }
                         }
                     }
                 }
-                Event::NewEvents(start_cause) => {
-                    debug!("New events started: {:?}", start_cause);
-                }
+                Event::NewEvents(_) => {}
                 Event::Resumed => {
-                    debug!("Window resumed");
                     window.set_visible(true);
                     window.set_focus();
                     window.request_redraw();
                 }
-                _ => {
-                    debug!("Other event: {:?}", event);
-                },
+                _ => {},
             }
         });
     }
