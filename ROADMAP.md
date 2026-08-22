@@ -264,14 +264,34 @@ the useful half; evasion tooling is a different product with different obligatio
 Recorded so these don't get re-proposed.
 
 **Embedding multiple JS engines** (the old "JavaScript Engine Workshop": V8 integration,
-SpiderMonkey support, JavaScriptCore bridge, engine switching). Tinker is built on `wry`, which
-delegates to the OS webview and its bundled engine. You cannot swap V8 into the macOS build.
-SpiderMonkey is unavailable at any price — Gecko ships no embedding API of this kind, so Firefox
-coverage would mean abandoning `wry` entirely.
+SpiderMonkey support, JavaScriptCore bridge, engine switching).
 
-*The underlying goal survives as M4*, which gets cross-engine coverage from the CI matrix instead —
-real WebKit and real Chromium, in their shipping configurations, which is better evidence than
-embedded engines would have provided anyway.
+This was attempted. The `feat/js-engine-integration` branch (30 commits, January 2025) built
+`src/js_engine/` with a `JsEngine` trait and V8, JavaScriptCore, and SpiderMonkey implementations
+behind Cargo features. It was reviewed before this section was written, and it does not change the
+conclusion — it sharpens it.
+
+The decisive detail is what those implementations actually are. `SpiderMonkeyEngine` constructs a
+bare `mozjs::rust::Runtime` with `SIMPLE_GLOBAL_CLASS`; `JavaScriptCoreEngine` constructs a bare
+`javascriptcore_rs::Context`. Both are **standalone interpreters with no DOM** — no `window`, no
+`document`, no layout, no browser APIs. And in that branch's `Cargo.toml` they sit *alongside* the
+webview rather than replacing it: `webview = ["dep:wry", "dep:tao"]` and `v8 = ["dep:v8"]` are
+independent features. The embedded engines never render the page.
+
+That is fatal for the goal. Cross-browser bugs live in DOM behavior, layout, CSS, event handling,
+and browser API differences. A bare ECMAScript interpreter with no `document` cannot observe any of
+them. Even had the branch compiled — its own commit message says "Build currently failing, needs
+dependency fixes" — it would have answered a question nobody was asking: whether pure ECMAScript
+differs between engines, which is both rare and heavily standardized.
+
+*The underlying goal is already met by M2 and extended by M4.* The CI matrix runs real WebKit
+(Linux, macOS) and real Chromium/V8 (Windows) in their shipping configurations, rendering real
+pages. That is strictly better evidence than embedded engines could produce, and it exists today.
+
+**Worth salvaging separately:** that branch's Cargo feature reorganization — optional dependencies
+with granular `webview` / `cli` / `api` / `metrics` features — is sound practice independent of the
+engine work, and would cut build times for users who don't need every subsystem. Filed here rather
+than lost.
 
 **Full platform abstraction as originally scoped.** `tao` and `wry` already abstract windowing and
 webviews. M2 decides whether the thin remainder is worth keeping.
