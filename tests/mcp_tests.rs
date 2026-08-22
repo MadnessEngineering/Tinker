@@ -6,7 +6,6 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 #[test]
-#[ignore] // Ignore by default since it requires building the binary
 fn test_mcp_server_initialize() {
     let mut child = Command::new("cargo")
         .args(&["run", "--", "--mcp", "--url", "https://example.com"])
@@ -60,7 +59,6 @@ fn test_mcp_server_initialize() {
 }
 
 #[test]
-#[ignore] // Ignore by default since it requires building the binary
 fn test_mcp_server_tools_list() {
     let mut child = Command::new("cargo")
         .args(&["run", "--", "--mcp", "--url", "https://example.com"])
@@ -118,7 +116,6 @@ fn test_mcp_server_tools_list() {
 }
 
 #[test]
-#[ignore] // Ignore by default since it requires building the binary
 fn test_mcp_server_invalid_request() {
     let mut child = Command::new("cargo")
         .args(&["run", "--", "--mcp", "--url", "https://example.com"])
