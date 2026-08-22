@@ -3,13 +3,11 @@
 use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
 #[test]
-#[ignore] // Ignore by default since it requires building the binary
 fn test_mcp_server_initialize() {
-    let mut child = Command::new("cargo")
-        .args(&["run", "--", "--mcp", "--url", "https://example.com"])
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tinker"))
+        .args(&["--mcp", "--url", "https://example.com"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -20,8 +18,8 @@ fn test_mcp_server_initialize() {
     let stdout = child.stdout.take().expect("Failed to open stdout");
     let mut reader = BufReader::new(stdout);
 
-    // Give the server time to start
-    std::thread::sleep(Duration::from_secs(2));
+    // No startup wait needed: the binary is already built, and the server reads
+    // stdin as soon as it starts. The request below simply queues until then.
 
     // Send initialize request
     let request = json!({
@@ -60,10 +58,9 @@ fn test_mcp_server_initialize() {
 }
 
 #[test]
-#[ignore] // Ignore by default since it requires building the binary
 fn test_mcp_server_tools_list() {
-    let mut child = Command::new("cargo")
-        .args(&["run", "--", "--mcp", "--url", "https://example.com"])
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tinker"))
+        .args(&["--mcp", "--url", "https://example.com"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -74,8 +71,8 @@ fn test_mcp_server_tools_list() {
     let stdout = child.stdout.take().expect("Failed to open stdout");
     let mut reader = BufReader::new(stdout);
 
-    // Give the server time to start
-    std::thread::sleep(Duration::from_secs(2));
+    // No startup wait needed: the binary is already built, and the server reads
+    // stdin as soon as it starts. The request below simply queues until then.
 
     // Send tools/list request
     let request = json!({
@@ -118,10 +115,9 @@ fn test_mcp_server_tools_list() {
 }
 
 #[test]
-#[ignore] // Ignore by default since it requires building the binary
 fn test_mcp_server_invalid_request() {
-    let mut child = Command::new("cargo")
-        .args(&["run", "--", "--mcp", "--url", "https://example.com"])
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tinker"))
+        .args(&["--mcp", "--url", "https://example.com"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -132,8 +128,8 @@ fn test_mcp_server_invalid_request() {
     let stdout = child.stdout.take().expect("Failed to open stdout");
     let mut reader = BufReader::new(stdout);
 
-    // Give the server time to start
-    std::thread::sleep(Duration::from_secs(2));
+    // No startup wait needed: the binary is already built, and the server reads
+    // stdin as soon as it starts. The request below simply queues until then.
 
     // Send invalid JSON
     writeln!(stdin, "{{invalid json}}").expect("Failed to write request");

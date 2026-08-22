@@ -76,21 +76,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         env::set_var("DEBUG", "TRUE");
     }
 
+    // Parse arguments before initializing logging: MCP mode speaks JSON-RPC over
+    // stdout, so the subscriber has to be pointed at stderr before it writes its
+    // first line. Anything on stdout that isn't a JSON-RPC message corrupts the
+    // stream and the client fails to parse the response.
+    let args = Args::parse();
+
     // Initialize logging with more detailed format
-    tracing_subscriber::fmt()
+    let subscriber = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env()
             .add_directive("tinker=debug".parse()?)
             .add_directive("wry=debug".parse()?))
         .with_file(true)
         .with_line_number(true)
         .with_thread_ids(true)
-        .with_target(true)
-        .init();
+        .with_target(true);
+
+    if args.mcp {
+        subscriber.with_writer(std::io::stderr).init();
+    } else {
+        subscriber.init();
+    }
 
     info!("Starting Tinker Workshop...");
-
-    // Parse command line arguments
-    let args = Args::parse();
 
     // Create broadcast channels for API server or MCP server if enabled
     let (api_event_tx, api_event_rx) = if args.api || args.mcp {
