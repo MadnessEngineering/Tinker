@@ -387,6 +387,65 @@ impl McpServer {
                     "required": ["test_name"]
                 }),
             ),
+            // Console monitoring. Without these an agent can act on a page but
+            // cannot see whether the page complained, which is usually the first
+            // thing worth knowing after an interaction.
+            self.tool_definition(
+                "start_console_monitoring",
+                "Start capturing console output (log, info, warn, error) from the page",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "stop_console_monitoring",
+                "Stop capturing console output",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "get_console_logs",
+                "Retrieve captured console messages, optionally filtered by level.                  Use after an interaction to check whether the page reported errors.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "level": {
+                            "type": "string",
+                            "description": "Only return messages at this level",
+                            "enum": ["log", "info", "warn", "error", "debug"]
+                        }
+                    }
+                }),
+            ),
+            self.tool_definition(
+                "clear_console_logs",
+                "Clear the captured console message buffer",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            // Performance. The REST API has exposed these for a while; agents
+            // could not reach them.
+            self.tool_definition(
+                "start_performance_monitoring",
+                "Start collecting performance metrics for the current page",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "stop_performance_monitoring",
+                "Stop collecting performance metrics",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "get_core_web_vitals",
+                "Get Core Web Vitals for the current page (LCP, FID, CLS, INP, TTFB, FCP)",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "get_memory_metrics",
+                "Get memory usage for the current page (JS heap, DOM nodes, event listeners)",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "get_performance_summary",
+                "Get an aggregate performance summary for the current page",
+                json!({ "type": "object", "properties": {} }),
+            ),
         ];
 
         Ok(json!({
@@ -538,6 +597,22 @@ impl McpServer {
                     script: script.to_string(),
                 }
             }
+            "start_console_monitoring" => BrowserCommand::StartConsoleMonitoring,
+            "stop_console_monitoring" => BrowserCommand::StopConsoleMonitoring,
+            "get_console_logs" => BrowserCommand::GetConsoleLogs {
+                // Absent means "all levels", which is why this is not a required
+                // argument and a missing value is not an error.
+                level: arguments
+                    .get("level")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+            },
+            "clear_console_logs" => BrowserCommand::ClearConsoleLogs,
+            "start_performance_monitoring" => BrowserCommand::StartPerformanceMonitoring,
+            "stop_performance_monitoring" => BrowserCommand::StopPerformanceMonitoring,
+            "get_core_web_vitals" => BrowserCommand::GetCoreWebVitals,
+            "get_memory_metrics" => BrowserCommand::GetMemoryMetrics,
+            "get_performance_summary" => BrowserCommand::GetPerformanceSummary,
             "start_network_monitoring" => BrowserCommand::StartNetworkMonitoring,
             "stop_network_monitoring" => BrowserCommand::StopNetworkMonitoring,
             "get_network_stats" => BrowserCommand::GetNetworkStats,
@@ -807,6 +882,111 @@ mod tests {
 
         let result = server.handle_tool_call(Some(params));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_console_tools_dispatch_expected_commands() {
+        let (mut server, mut rx) = setup_test_server();
+
+        for (tool, expected) in [
+            ("start_console_monitoring", BrowserCommand::StartConsoleMonitoring),
+            ("stop_console_monitoring", BrowserCommand::StopConsoleMonitoring),
+            ("clear_console_logs", BrowserCommand::ClearConsoleLogs),
+        ] {
+            let params = json!({ "name": tool, "arguments": {} });
+            assert!(server.handle_tool_call(Some(params)).is_ok(), "{} failed", tool);
+            let sent = rx.try_recv().expect("no command was broadcast");
+            assert_eq!(
+                std::mem::discriminant(&sent),
+                std::mem::discriminant(&expected),
+                "{} dispatched the wrong command",
+                tool
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_console_logs_passes_level_through() {
+        let (mut server, mut rx) = setup_test_server();
+
+        let params = json!({
+            "name": "get_console_logs",
+            "arguments": { "level": "error" }
+        });
+        assert!(server.handle_tool_call(Some(params)).is_ok());
+
+        match rx.try_recv().expect("no command was broadcast") {
+            BrowserCommand::GetConsoleLogs { level } => {
+                assert_eq!(level.as_deref(), Some("error"));
+            }
+            other => panic!("expected GetConsoleLogs, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_get_console_logs_without_level_means_all() {
+        let (mut server, mut rx) = setup_test_server();
+
+        // `level` is optional; omitting it must not be an error, and must not
+        // silently become a filter.
+        let params = json!({ "name": "get_console_logs", "arguments": {} });
+        assert!(server.handle_tool_call(Some(params)).is_ok());
+
+        match rx.try_recv().expect("no command was broadcast") {
+            BrowserCommand::GetConsoleLogs { level } => assert_eq!(level, None),
+            other => panic!("expected GetConsoleLogs, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_performance_tools_dispatch_expected_commands() {
+        let (mut server, mut rx) = setup_test_server();
+
+        for (tool, expected) in [
+            ("start_performance_monitoring", BrowserCommand::StartPerformanceMonitoring),
+            ("stop_performance_monitoring", BrowserCommand::StopPerformanceMonitoring),
+            ("get_core_web_vitals", BrowserCommand::GetCoreWebVitals),
+            ("get_memory_metrics", BrowserCommand::GetMemoryMetrics),
+            ("get_performance_summary", BrowserCommand::GetPerformanceSummary),
+        ] {
+            let params = json!({ "name": tool, "arguments": {} });
+            assert!(server.handle_tool_call(Some(params)).is_ok(), "{} failed", tool);
+            let sent = rx.try_recv().expect("no command was broadcast");
+            assert_eq!(
+                std::mem::discriminant(&sent),
+                std::mem::discriminant(&expected),
+                "{} dispatched the wrong command",
+                tool
+            );
+        }
+    }
+
+    #[test]
+    fn test_observability_tools_are_advertised() {
+        let (server, _rx) = setup_test_server();
+        let result = server.handle_tools_list().unwrap();
+        let names: Vec<&str> = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+
+        // A tool that dispatches but isn't advertised is invisible to an agent,
+        // so listing and dispatch have to be checked together.
+        for expected in [
+            "start_console_monitoring",
+            "stop_console_monitoring",
+            "get_console_logs",
+            "clear_console_logs",
+            "start_performance_monitoring",
+            "stop_performance_monitoring",
+            "get_core_web_vitals",
+            "get_memory_metrics",
+            "get_performance_summary",
+        ] {
+            assert!(names.contains(&expected), "{} missing from tools/list", expected);
+        }
     }
 
     #[test]

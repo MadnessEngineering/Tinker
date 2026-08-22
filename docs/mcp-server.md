@@ -207,6 +207,38 @@ Execute JavaScript code in the page context.
 **Arguments:**
 - `script` (string, required): JavaScript code to execute
 
+### Console Monitoring
+
+#### start_console_monitoring
+Start capturing console output (log, info, warn, error) from the page. No arguments.
+
+#### stop_console_monitoring
+Stop capturing console output. No arguments.
+
+#### get_console_logs
+Retrieve captured console messages. Optional `level` (`log`, `info`, `warn`, `error`, `debug`);
+omit it to get everything. Use this after an interaction to check whether the page reported errors.
+
+#### clear_console_logs
+Clear the captured message buffer. No arguments.
+
+### Performance
+
+#### start_performance_monitoring
+Start collecting performance metrics. No arguments.
+
+#### stop_performance_monitoring
+Stop collecting performance metrics. No arguments.
+
+#### get_core_web_vitals
+Get Core Web Vitals for the current page (LCP, FID, CLS, INP, TTFB, FCP). No arguments.
+
+#### get_memory_metrics
+Get memory usage (JS heap, DOM nodes, event listeners). No arguments.
+
+#### get_performance_summary
+Get an aggregate performance summary. No arguments.
+
 ### Network Monitoring
 
 #### start_network_monitoring

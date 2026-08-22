@@ -180,10 +180,10 @@ tests, DOM find/click/type, JavaScript execution, and network monitoring.
 
 ### M3 — Close the agent feedback loop
 
-- [ ] **Expose the observability suite over MCP.** Console logs, performance metrics, and Core Web
-      Vitals are all built and reachable via REST, but absent from the MCP tool list. An agent
-      currently can't ask "did that click throw a console error?" — the highest-value question it
-      could ask.
+- [x] **Expose the observability suite over MCP.** Nine tools added — four for console capture,
+      five for performance — taking the advertised surface from 16 tools to 25. An agent can now
+      ask "did that click throw a console error?", which it previously could not. All nine were
+      already reachable over REST; only the MCP binding was missing.
 - [ ] **Expose recording/replay over MCP.** Let an agent record its own session and replay it.
 - [ ] **Structured errors for agents.** Failures should return machine-readable causes, not prose.
 - [ ] **MCP resources and prompts.** `handle_resources_list` and `handle_prompts_list` return empty.
