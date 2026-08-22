@@ -10,7 +10,31 @@ use std::io::{self, BufRead, Write};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 
+use std::sync::{Arc, Mutex};
+
+use crate::browser::{ConsoleLevel, ConsoleMonitor, EventPlayer, NetworkMonitor, PerformanceMonitor};
 use crate::event::{BrowserCommand, BrowserEvent};
+
+/// Shared browser state the MCP server can read directly.
+///
+/// Tools cannot answer reads by round-tripping the broadcast bus: `BrowserEvent`
+/// carries no request id, and some variants (`ConsoleMessage`) are emitted
+/// spontaneously by the page, so correlating a reply to a request by time window
+/// is racy in both directions. The MCP server runs on its own thread inside the
+/// same process as the engine, so it can instead hold the same `Arc<Mutex<..>>`
+/// handles the engine holds and read them directly.
+///
+/// This covers state the engine owns. It deliberately does not cover reads that
+/// need the WebView itself -- `get_page_info`, `execute_javascript`,
+/// `find_element`, `take_screenshot` -- because those must run on the thread
+/// owning the window, and they stay fire-and-forget for now.
+#[derive(Clone)]
+pub struct BrowserState {
+    pub console: Arc<Mutex<ConsoleMonitor>>,
+    pub performance: Arc<Mutex<PerformanceMonitor>>,
+    pub network: Arc<Mutex<NetworkMonitor>>,
+    pub player: Arc<Mutex<EventPlayer>>,
+}
 
 /// MCP protocol version
 const MCP_VERSION: &str = "2024-11-05";
@@ -48,6 +72,9 @@ struct JsonRpcError {
 pub struct McpServer {
     command_tx: broadcast::Sender<BrowserCommand>,
     event_rx: broadcast::Receiver<BrowserEvent>,
+    /// Present when the server shares a process with a running engine. Without
+    /// it, reads fall back to the fire-and-forget path.
+    state: Option<BrowserState>,
 }
 
 impl McpServer {
@@ -59,7 +86,109 @@ impl McpServer {
         Self {
             command_tx,
             event_rx,
+            state: None,
         }
+    }
+
+    /// Attach shared engine state so reads return real values instead of an
+    /// acknowledgement. Call this when the server runs in-process with an engine.
+    pub fn with_state(mut self, state: BrowserState) -> Self {
+        self.state = Some(state);
+        self
+    }
+
+    /// Answer a read from shared state, if this tool is one that can be.
+    ///
+    /// Returns `Ok(None)` when the tool isn't a local read or no state is
+    /// attached, in which case the caller falls back to broadcasting a command.
+    fn try_local_read(
+        &self,
+        tool_name: &str,
+        arguments: &Value,
+    ) -> Result<Option<Value>, JsonRpcError> {
+        let Some(state) = &self.state else {
+            return Ok(None);
+        };
+
+        // A poisoned lock means another thread panicked holding it. Surface that
+        // as an error rather than panicking the MCP server too.
+        fn lock_err(what: &str) -> JsonRpcError {
+            JsonRpcError {
+                code: -32603,
+                message: format!("Failed to lock {}", what),
+                data: None,
+            }
+        }
+
+        let value = match tool_name {
+            "get_console_logs" => {
+                let level = arguments
+                    .get("level")
+                    .and_then(|v| v.as_str())
+                    .and_then(ConsoleLevel::from_str);
+                let monitor = state.console.lock().map_err(|_| lock_err("console monitor"))?;
+                let messages = monitor.get_messages(level);
+                json!({ "count": messages.len(), "messages": messages })
+            }
+            "get_core_web_vitals" => {
+                let monitor = state
+                    .performance
+                    .lock()
+                    .map_err(|_| lock_err("performance monitor"))?;
+                json!(monitor.get_core_web_vitals())
+            }
+            "get_memory_metrics" => {
+                let monitor = state
+                    .performance
+                    .lock()
+                    .map_err(|_| lock_err("performance monitor"))?;
+                match monitor.get_latest_memory() {
+                    Some(metrics) => json!(metrics),
+                    // No snapshot yet is a legitimate state, not an error.
+                    None => json!(null),
+                }
+            }
+            "get_performance_summary" => {
+                let monitor = state
+                    .performance
+                    .lock()
+                    .map_err(|_| lock_err("performance monitor"))?;
+                json!(monitor.get_summary())
+            }
+            "get_network_stats" => {
+                let monitor = state.network.lock().map_err(|_| lock_err("network monitor"))?;
+                json!(monitor.get_stats())
+            }
+            "export_network_har" => {
+                let monitor = state.network.lock().map_err(|_| lock_err("network monitor"))?;
+                let har = monitor.export_har().map_err(|e| JsonRpcError {
+                    code: -32603,
+                    message: format!("Failed to export HAR: {}", e),
+                    data: None,
+                })?;
+                json!({ "har": har })
+            }
+            "get_playback_state" => {
+                let player = state.player.lock().map_err(|_| lock_err("player"))?;
+                // PlaybackState alone isn't much use to an agent deciding what to
+                // do next; position and counts are what it actually needs.
+                json!({
+                    "state": format!("{:?}", player.get_state()),
+                    "position_ms": player.get_position(),
+                    "duration_ms": player.get_duration(),
+                    "current_index": player.get_current_index(),
+                    "event_count": player.get_event_count(),
+                })
+            }
+            _ => return Ok(None),
+        };
+
+        Ok(Some(json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
+            }]
+        })))
     }
 
     /// Run the MCP server (blocking)
@@ -387,6 +516,137 @@ impl McpServer {
                     "required": ["test_name"]
                 }),
             ),
+            // Console monitoring. Without these an agent can act on a page but
+            // cannot see whether the page complained, which is usually the first
+            // thing worth knowing after an interaction.
+            self.tool_definition(
+                "start_console_monitoring",
+                "Start capturing console output (log, info, warn, error) from the page",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "stop_console_monitoring",
+                "Stop capturing console output",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "get_console_logs",
+                "Retrieve captured console messages, optionally filtered by level.                  Use after an interaction to check whether the page reported errors.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "level": {
+                            "type": "string",
+                            "description": "Only return messages at this level",
+                            "enum": ["log", "info", "warn", "error", "debug"]
+                        }
+                    }
+                }),
+            ),
+            self.tool_definition(
+                "clear_console_logs",
+                "Clear the captured console message buffer",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            // Performance. The REST API has exposed these for a while; agents
+            // could not reach them.
+            self.tool_definition(
+                "start_performance_monitoring",
+                "Start collecting performance metrics for the current page",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "stop_performance_monitoring",
+                "Stop collecting performance metrics",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "get_core_web_vitals",
+                "Get Core Web Vitals for the current page (LCP, FID, CLS, INP, TTFB, FCP)",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "get_memory_metrics",
+                "Get memory usage for the current page (JS heap, DOM nodes, event listeners)",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            // Recording and replay. Lets an agent capture what it did and replay
+            // it deterministically — the difference between "it worked once" and
+            // a reproducible case.
+            self.tool_definition(
+                "start_recording",
+                "Start recording browser events into a named session",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Name for the recording" },
+                        "start_url": { "type": "string", "description": "URL to begin the recording at" }
+                    },
+                    "required": ["name", "start_url"]
+                }),
+            ),
+            self.tool_definition(
+                "stop_recording",
+                "Stop the active recording",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "save_recording",
+                "Save the current recording to a file",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "File path to write the recording to" }
+                    },
+                    "required": ["path"]
+                }),
+            ),
+            self.tool_definition(
+                "load_recording",
+                "Load a previously saved recording from a file",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "File path to read the recording from" }
+                    },
+                    "required": ["path"]
+                }),
+            ),
+            self.tool_definition(
+                "start_playback",
+                "Begin replaying the loaded recording",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "stop_playback",
+                "Stop replaying",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "get_playback_state",
+                "Get the current playback state (position, speed, whether running)",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "step_playback",
+                "Step one event forward or backward through the recording. Use this to \
+                 narrow down which event in a reproduction causes a failure.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "direction": {
+                            "type": "string",
+                            "description": "Which way to step (default \"forward\")",
+                            "enum": ["forward", "backward"]
+                        }
+                    }
+                }),
+            ),
+            self.tool_definition(
+                "get_performance_summary",
+                "Get an aggregate performance summary for the current page",
+                json!({ "type": "object", "properties": {} }),
+            ),
         ];
 
         Ok(json!({
@@ -411,6 +671,13 @@ impl McpServer {
         let arguments = params["arguments"].clone();
 
         debug!("Tool call: {} with args: {:?}", tool_name, arguments);
+
+        // Reads answerable from shared state return the value itself. Everything
+        // else falls through to the broadcast path below, which can only
+        // acknowledge that the command was sent.
+        if let Some(result) = self.try_local_read(tool_name, &arguments)? {
+            return Ok(result);
+        }
 
         let command = match tool_name {
             "navigate" => {
@@ -538,6 +805,76 @@ impl McpServer {
                     script: script.to_string(),
                 }
             }
+            "start_recording" => {
+                let name = arguments["name"].as_str().ok_or_else(|| JsonRpcError {
+                    code: -32602,
+                    message: "Missing required parameter: name".to_string(),
+                    data: None,
+                })?;
+                let start_url = arguments["start_url"].as_str().ok_or_else(|| JsonRpcError {
+                    code: -32602,
+                    message: "Missing required parameter: start_url".to_string(),
+                    data: None,
+                })?;
+                BrowserCommand::StartRecording {
+                    name: name.to_string(),
+                    start_url: start_url.to_string(),
+                }
+            }
+            "stop_recording" => BrowserCommand::StopRecording,
+            "save_recording" => {
+                let path = arguments["path"].as_str().ok_or_else(|| JsonRpcError {
+                    code: -32602,
+                    message: "Missing required parameter: path".to_string(),
+                    data: None,
+                })?;
+                BrowserCommand::SaveRecording { path: path.to_string() }
+            }
+            "load_recording" => {
+                let path = arguments["path"].as_str().ok_or_else(|| JsonRpcError {
+                    code: -32602,
+                    message: "Missing required parameter: path".to_string(),
+                    data: None,
+                })?;
+                BrowserCommand::LoadRecording { path: path.to_string() }
+            }
+            "start_playback" => BrowserCommand::StartPlayback,
+            "stop_playback" => BrowserCommand::StopPlayback,
+            "get_playback_state" => BrowserCommand::GetPlaybackState,
+            "step_playback" => {
+                // Two directions behind one tool: an agent bisecting a failure
+                // thinks in terms of "step", not two separate verbs.
+                match arguments.get("direction").and_then(|v| v.as_str()).unwrap_or("forward") {
+                    "backward" => BrowserCommand::StepBackward,
+                    "forward" => BrowserCommand::StepForward,
+                    other => {
+                        return Err(JsonRpcError {
+                            code: -32602,
+                            message: format!(
+                                "Invalid direction {:?}: expected \"forward\" or \"backward\"",
+                                other
+                            ),
+                            data: None,
+                        })
+                    }
+                }
+            }
+            "start_console_monitoring" => BrowserCommand::StartConsoleMonitoring,
+            "stop_console_monitoring" => BrowserCommand::StopConsoleMonitoring,
+            "get_console_logs" => BrowserCommand::GetConsoleLogs {
+                // Absent means "all levels", which is why this is not a required
+                // argument and a missing value is not an error.
+                level: arguments
+                    .get("level")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+            },
+            "clear_console_logs" => BrowserCommand::ClearConsoleLogs,
+            "start_performance_monitoring" => BrowserCommand::StartPerformanceMonitoring,
+            "stop_performance_monitoring" => BrowserCommand::StopPerformanceMonitoring,
+            "get_core_web_vitals" => BrowserCommand::GetCoreWebVitals,
+            "get_memory_metrics" => BrowserCommand::GetMemoryMetrics,
+            "get_performance_summary" => BrowserCommand::GetPerformanceSummary,
             "start_network_monitoring" => BrowserCommand::StartNetworkMonitoring,
             "stop_network_monitoring" => BrowserCommand::StopNetworkMonitoring,
             "get_network_stats" => BrowserCommand::GetNetworkStats,
@@ -807,6 +1144,337 @@ mod tests {
 
         let result = server.handle_tool_call(Some(params));
         assert!(result.is_ok());
+    }
+
+    /// A server with shared state, plus the state so a test can populate it.
+    fn setup_server_with_state(
+    ) -> (McpServer, BrowserState, broadcast::Receiver<BrowserCommand>) {
+        use crate::browser::{ConsoleMessage, NetworkMonitor, PerformanceMonitor};
+        // The receiver is returned rather than dropped: with no subscribers,
+        // broadcast::send fails and every action tool would error.
+        let (command_tx, command_rx) = broadcast::channel(100);
+        let (_event_tx, event_rx) = broadcast::channel(100);
+        let state = BrowserState {
+            console: Arc::new(Mutex::new(ConsoleMonitor::new())),
+            performance: Arc::new(Mutex::new(PerformanceMonitor::new())),
+            network: Arc::new(Mutex::new(NetworkMonitor::new())),
+            player: Arc::new(Mutex::new(EventPlayer::new())),
+        };
+        let _ = ConsoleMessage::new(ConsoleLevel::Log, String::new(), vec![]);
+        (
+            McpServer::new(command_tx, event_rx).with_state(state.clone()),
+            state,
+            command_rx,
+        )
+    }
+
+    /// The point of the whole local-read path: a read must come back with the
+    /// data, not with "Command 'x' sent successfully".
+    #[test]
+    fn test_get_console_logs_returns_actual_messages() {
+        use crate::browser::ConsoleMessage;
+        let (mut server, state, _rx) = setup_server_with_state();
+
+        {
+            let mut monitor = state.console.lock().unwrap();
+            monitor.add_message(ConsoleMessage::new(
+                ConsoleLevel::Error,
+                "TypeError: undefined is not a function".to_string(),
+                vec![],
+            ));
+            monitor.add_message(ConsoleMessage::new(
+                ConsoleLevel::Log,
+                "hello".to_string(),
+                vec![],
+            ));
+        }
+
+        let params = json!({ "name": "get_console_logs", "arguments": {} });
+        let result = server.handle_tool_call(Some(params)).unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+
+        assert!(
+            !text.contains("sent successfully"),
+            "read returned an acknowledgement instead of data: {}",
+            text
+        );
+        let payload: Value = serde_json::from_str(text).expect("read should return JSON");
+        assert_eq!(payload["count"], 2);
+        assert!(text.contains("TypeError: undefined is not a function"));
+    }
+
+    #[test]
+    fn test_get_console_logs_level_filter_applies_to_real_data() {
+        use crate::browser::ConsoleMessage;
+        let (mut server, state, _rx) = setup_server_with_state();
+
+        {
+            let mut monitor = state.console.lock().unwrap();
+            monitor.add_message(ConsoleMessage::new(
+                ConsoleLevel::Error,
+                "boom".to_string(),
+                vec![],
+            ));
+            monitor.add_message(ConsoleMessage::new(
+                ConsoleLevel::Log,
+                "chatter".to_string(),
+                vec![],
+            ));
+        }
+
+        let params = json!({
+            "name": "get_console_logs",
+            "arguments": { "level": "error" }
+        });
+        let result = server.handle_tool_call(Some(params)).unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+
+        assert!(text.contains("boom"), "error message missing: {}", text);
+        assert!(!text.contains("chatter"), "filter did not exclude lower level: {}", text);
+    }
+
+    #[test]
+    fn test_playback_state_read_returns_position_not_ack() {
+        let (mut server, _state, _rx) = setup_server_with_state();
+
+        let params = json!({ "name": "get_playback_state", "arguments": {} });
+        let result = server.handle_tool_call(Some(params)).unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+
+        let payload: Value = serde_json::from_str(text).expect("read should return JSON");
+        // The bare enum isn't enough for an agent to decide what to do next.
+        for key in ["state", "position_ms", "duration_ms", "current_index", "event_count"] {
+            assert!(!payload[key].is_null(), "{} missing from playback state", key);
+        }
+    }
+
+    /// Actions still broadcast; only reads are answered locally.
+    #[test]
+    fn test_actions_still_broadcast_with_state_attached() {
+        let (mut server, _state, _rx) = setup_server_with_state();
+
+        let params = json!({
+            "name": "navigate",
+            "arguments": { "url": "https://example.com" }
+        });
+        let result = server.handle_tool_call(Some(params)).unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("sent successfully"), "expected an ack, got: {}", text);
+    }
+
+    /// Without state the server must still work, just without real reads.
+    #[test]
+    fn test_reads_fall_back_to_ack_without_state() {
+        let (mut server, _rx) = setup_test_server();
+
+        let params = json!({ "name": "get_console_logs", "arguments": {} });
+        let result = server.handle_tool_call(Some(params)).unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("sent successfully"));
+    }
+
+    #[test]
+    fn test_recording_tools_dispatch_expected_commands() {
+        let (mut server, mut rx) = setup_test_server();
+
+        for (tool, expected) in [
+            ("stop_recording", BrowserCommand::StopRecording),
+            ("start_playback", BrowserCommand::StartPlayback),
+            ("stop_playback", BrowserCommand::StopPlayback),
+            ("get_playback_state", BrowserCommand::GetPlaybackState),
+        ] {
+            let params = json!({ "name": tool, "arguments": {} });
+            assert!(server.handle_tool_call(Some(params)).is_ok(), "{} failed", tool);
+            let sent = rx.try_recv().expect("no command was broadcast");
+            assert_eq!(
+                std::mem::discriminant(&sent),
+                std::mem::discriminant(&expected),
+                "{} dispatched the wrong command",
+                tool
+            );
+        }
+    }
+
+    #[test]
+    fn test_start_recording_passes_arguments_through() {
+        let (mut server, mut rx) = setup_test_server();
+
+        let params = json!({
+            "name": "start_recording",
+            "arguments": { "name": "checkout-flow", "start_url": "https://example.com/cart" }
+        });
+        assert!(server.handle_tool_call(Some(params)).is_ok());
+
+        match rx.try_recv().expect("no command was broadcast") {
+            BrowserCommand::StartRecording { name, start_url } => {
+                assert_eq!(name, "checkout-flow");
+                assert_eq!(start_url, "https://example.com/cart");
+            }
+            other => panic!("expected StartRecording, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_start_recording_requires_both_arguments() {
+        let (mut server, _rx) = setup_test_server();
+
+        // start_url missing
+        let params = json!({
+            "name": "start_recording",
+            "arguments": { "name": "only-a-name" }
+        });
+        assert!(server.handle_tool_call(Some(params)).is_err());
+    }
+
+    #[test]
+    fn test_step_playback_direction() {
+        let (mut server, mut rx) = setup_test_server();
+
+        // Explicit backward
+        let params = json!({
+            "name": "step_playback",
+            "arguments": { "direction": "backward" }
+        });
+        assert!(server.handle_tool_call(Some(params)).is_ok());
+        assert_eq!(
+            std::mem::discriminant(&rx.try_recv().unwrap()),
+            std::mem::discriminant(&BrowserCommand::StepBackward)
+        );
+
+        // Omitted direction defaults to forward
+        let params = json!({ "name": "step_playback", "arguments": {} });
+        assert!(server.handle_tool_call(Some(params)).is_ok());
+        assert_eq!(
+            std::mem::discriminant(&rx.try_recv().unwrap()),
+            std::mem::discriminant(&BrowserCommand::StepForward)
+        );
+    }
+
+    #[test]
+    fn test_step_playback_rejects_unknown_direction() {
+        let (mut server, mut rx) = setup_test_server();
+
+        // A typo must be an error, not a silent step in the default direction --
+        // an agent bisecting a failure would be misled by the wrong way.
+        let params = json!({
+            "name": "step_playback",
+            "arguments": { "direction": "backwards" }
+        });
+        assert!(server.handle_tool_call(Some(params)).is_err());
+        assert!(rx.try_recv().is_err(), "no command should have been broadcast");
+    }
+
+    #[test]
+    fn test_console_tools_dispatch_expected_commands() {
+        let (mut server, mut rx) = setup_test_server();
+
+        for (tool, expected) in [
+            ("start_console_monitoring", BrowserCommand::StartConsoleMonitoring),
+            ("stop_console_monitoring", BrowserCommand::StopConsoleMonitoring),
+            ("clear_console_logs", BrowserCommand::ClearConsoleLogs),
+        ] {
+            let params = json!({ "name": tool, "arguments": {} });
+            assert!(server.handle_tool_call(Some(params)).is_ok(), "{} failed", tool);
+            let sent = rx.try_recv().expect("no command was broadcast");
+            assert_eq!(
+                std::mem::discriminant(&sent),
+                std::mem::discriminant(&expected),
+                "{} dispatched the wrong command",
+                tool
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_console_logs_passes_level_through() {
+        let (mut server, mut rx) = setup_test_server();
+
+        let params = json!({
+            "name": "get_console_logs",
+            "arguments": { "level": "error" }
+        });
+        assert!(server.handle_tool_call(Some(params)).is_ok());
+
+        match rx.try_recv().expect("no command was broadcast") {
+            BrowserCommand::GetConsoleLogs { level } => {
+                assert_eq!(level.as_deref(), Some("error"));
+            }
+            other => panic!("expected GetConsoleLogs, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_get_console_logs_without_level_means_all() {
+        let (mut server, mut rx) = setup_test_server();
+
+        // `level` is optional; omitting it must not be an error, and must not
+        // silently become a filter.
+        let params = json!({ "name": "get_console_logs", "arguments": {} });
+        assert!(server.handle_tool_call(Some(params)).is_ok());
+
+        match rx.try_recv().expect("no command was broadcast") {
+            BrowserCommand::GetConsoleLogs { level } => assert_eq!(level, None),
+            other => panic!("expected GetConsoleLogs, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_performance_tools_dispatch_expected_commands() {
+        let (mut server, mut rx) = setup_test_server();
+
+        for (tool, expected) in [
+            ("start_performance_monitoring", BrowserCommand::StartPerformanceMonitoring),
+            ("stop_performance_monitoring", BrowserCommand::StopPerformanceMonitoring),
+            ("get_core_web_vitals", BrowserCommand::GetCoreWebVitals),
+            ("get_memory_metrics", BrowserCommand::GetMemoryMetrics),
+            ("get_performance_summary", BrowserCommand::GetPerformanceSummary),
+        ] {
+            let params = json!({ "name": tool, "arguments": {} });
+            assert!(server.handle_tool_call(Some(params)).is_ok(), "{} failed", tool);
+            let sent = rx.try_recv().expect("no command was broadcast");
+            assert_eq!(
+                std::mem::discriminant(&sent),
+                std::mem::discriminant(&expected),
+                "{} dispatched the wrong command",
+                tool
+            );
+        }
+    }
+
+    #[test]
+    fn test_observability_tools_are_advertised() {
+        let (server, _rx) = setup_test_server();
+        let result = server.handle_tools_list().unwrap();
+        let names: Vec<&str> = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+
+        // A tool that dispatches but isn't advertised is invisible to an agent,
+        // so listing and dispatch have to be checked together.
+        for expected in [
+            "start_console_monitoring",
+            "stop_console_monitoring",
+            "get_console_logs",
+            "clear_console_logs",
+            "start_performance_monitoring",
+            "stop_performance_monitoring",
+            "get_core_web_vitals",
+            "get_memory_metrics",
+            "get_performance_summary",
+            "start_recording",
+            "stop_recording",
+            "save_recording",
+            "load_recording",
+            "start_playback",
+            "stop_playback",
+            "get_playback_state",
+            "step_playback",
+        ] {
+            assert!(names.contains(&expected), "{} missing from tools/list", expected);
+        }
     }
 
     #[test]

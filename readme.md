@@ -173,6 +173,9 @@ Then ask Claude to control the browser:
 - **DOM Interaction**: find_element, click_element, type_text
 - **JavaScript**: execute_javascript, get_page_info
 - **Network**: start_network_monitoring, stop_network_monitoring, get_network_stats, export_network_har
+- **Console**: start_console_monitoring, stop_console_monitoring, get_console_logs, clear_console_logs
+- **Performance**: start_performance_monitoring, stop_performance_monitoring, get_core_web_vitals, get_memory_metrics, get_performance_summary
+- **Recording & Replay**: start_recording, stop_recording, save_recording, load_recording, start_playback, stop_playback, get_playback_state, step_playback
 
 See [MCP Server Documentation](docs/mcp-server.md) for complete details.
 
@@ -189,7 +192,7 @@ Tinker works and is useful, with the caveats below. Status here is kept
 honest against the code — see the [roadmap](ROADMAP.md) for a per-module
 breakdown citing implementing files and test counts.
 
-**Verified**: August 22, 2026 · ~70 browser commands · `cargo test` → 164 passed, 3 ignored
+**Verified**: August 22, 2026 · ~70 browser commands · `cargo test` → 140 passed, 0 failed
 
 ### What works
 
@@ -222,6 +225,12 @@ breakdown citing implementing files and test counts.
   testing (tab order, accessibility) isn't scriptable yet.
 - **Assertions are minimal.** Recordings can store expected state, but there's
   no authoring UX and no pass/fail surfacing.
+- **MCP tools don't return results.** Every tool triggers its command and
+  replies `"Command '<name>' sent successfully"`. Reads like
+  `get_console_logs` and `get_core_web_vitals` do not return logs or vitals —
+  results are published to the event bus instead. Use the REST API when you
+  need the answer back. Tracked as the top item in Track A of the
+  [roadmap](ROADMAP.md).
 
 ### Getting it running
 

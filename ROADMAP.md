@@ -16,11 +16,11 @@ Both sit on one core engine. Work that serves both lives in **Shared Foundation*
 ## Where Tinker actually stands
 
 The engine dispatches ~70 `BrowserCommand` variants (`src/event/mod.rs`), all handled in
-`src/browser/mod.rs`. `cargo test` reports **164 passed, 0 failed, 3 ignored** (the ignored three
-spawn the built binary). Verified on Linux, August 22, 2026.
+`src/browser/mod.rs`. `cargo test` reports **140 passed, 0 failed, 0 ignored**, verified on Linux
+and green on all three CI platforms, August 22, 2026.
 
 Counts below are of tests that actually execute. An earlier revision of this file over-counted by
-including tests in files that were never compiled — see the note on dead modules under M2.
+including tests in files that were never compiled — see the dead-modules entry under M1.
 
 ### Built and wired
 
@@ -31,14 +31,14 @@ including tests in files that were never compiled — see the note on dead modul
 | MQTT event tower + reconnection | `event/mod.rs` | 4 |
 | REST API | `api/mod.rs` | — |
 | WebSocket live control (`/ws`) | `api/mod.rs` | — |
-| MCP server (JSON-RPC 2.0 over stdio) | `mcp/mod.rs` | 34 |
+| MCP server (JSON-RPC 2.0 over stdio), 33 tools; reads answered locally | `mcp/mod.rs` | 49 |
 | DOM inspector (CSS/XPath/text), interaction, waits | `browser/inspector.rs` | 2 |
 | JavaScript execution | `browser/mod.rs` | — |
 | Visual baselines + pixel diffing | `browser/visual.rs` | 2 |
 | Network monitoring + HAR export + filters | `browser/network.rs` | 2 |
-| Console monitoring + filtering | `browser/console.rs` | 9 |
-| Performance: Core Web Vitals, memory, JS profiling, marks/measures | `browser/performance.rs` | 28 |
-| Recording + replay: seek, step forward/back, speed, loop | `browser/replay.rs` | 5 |
+| Console monitoring + filtering (REST + MCP) | `browser/console.rs` | 9 |
+| Performance: Core Web Vitals, memory, JS profiling, marks/measures (REST + MCP) | `browser/performance.rs` | 28 |
+| Recording + replay: seek, step forward/back, speed, loop (REST + MCP) | `browser/replay.rs` | 5 |
 
 ### Partial
 
@@ -49,12 +49,51 @@ including tests in files that were never compiled — see the note on dead modul
   windowing and webviews, so the open question is whether anything remains for this layer to do —
   see M2.
 
+### Known bug: `--mcp` requires a display
+
+`--mcp` still starts the browser engine, which initialises GTK and aborts the process when no
+display is available:
+
+```
+(tinker:32374): Gtk-WARNING **: cannot open display:
+```
+
+This races the MCP thread. If the server writes its JSON-RPC response before the main thread
+reaches GTK, the call succeeds; otherwise the process dies mid-reply and the client reads an empty
+line. Measured on Linux with no `DISPLAY`:
+
+| Invocation | Failure rate |
+|---|---|
+| Sequential | 0 / 20 |
+| 3 concurrent | 11 / 24 |
+| 3 concurrent, `--headless` | 3 / 12 |
+
+`--headless` reduces the window but does not close it, so it is not a workaround. It is not a
+concurrency bug either — concurrency only changes which side of the race wins, and more runner
+capacity would not help.
+
+Two consequences worth stating plainly:
+
+1. **It affects real use.** The Claude Desktop configuration in the readme runs `--mcp` over stdio.
+   On a headless machine that is the failing case, not an edge case.
+2. **It is a latent CI flake.** `tests/mcp_tests.rs` spawns three of these concurrently, which is
+   exactly the ~45% case. CI has passed six consecutive runs on luck, not correctness, and will go
+   red eventually. Treat an unexplained red on those three tests as this bug, not a new regression.
+
+The fix is for `--mcp` (and arguably `--headless`) to skip window creation entirely rather than
+initialising a webview it never shows. Deferred by request.
+
 ### Not started
 
-- CI of any kind. No `.github/workflows`.
 - Test generation from recordings.
 - Report/export layer.
-- Keyboard input over the API or MCP (`browser/keyboard.rs` is internal-only).
+- Page-level keyboard input. Note `browser/keyboard.rs` is *not* this: it maps chrome shortcuts
+  (Ctrl+T, Alt+Left) to browser commands that the API already exposes directly, so binding it
+  would add no capability. Testing tab order, focus traversal, and keyboard accessibility needs
+  events dispatched into the page — and synthetic `KeyboardEvent`s injected via JavaScript won't
+  do it, because browsers refuse default actions like focus movement for untrusted events. This
+  needs native input injection at the webview layer, which `wry` doesn't currently expose. Design
+  work before code.
 - Browser profiles — user agent, viewport, timezone, locale.
 - Cross-engine result comparison (see Track B, M4).
 
@@ -110,28 +149,75 @@ recorded elsewhere.
 Cross-engine testing (M4) is only meaningful if Tinker reliably runs on more than one platform.
 That makes this milestone load-bearing rather than housekeeping.
 
-- [ ] **GitHub Actions: build + test on macOS, Linux, Windows.** The suite passes and nothing runs
-      it. Start here.
-- [ ] **Install native deps in CI** so the workflow doubles as executable setup documentation.
+**The matrix is green.** As of August 22, 2026, Tinker builds and passes its full suite on all
+three platforms — the first time this has ever been verified:
+
+| Platform | Build | Test | Engine exercised |
+|---|---|---|---|
+| `ubuntu-latest` | 2m00s | 2s | WebKitGTK / JavaScriptCore |
+| `macos-latest` | 1m36s | 2s | WKWebView / JavaScriptCore |
+| `windows-latest` | 3m30s | 4s | WebView2 / V8 |
+
+That last column is the point: two engine families are already under test on every run. M4 is now
+a matter of comparing their results rather than acquiring the coverage.
+
+- [x] **GitHub Actions: build + test on macOS, Linux, Windows.** `.github/workflows/ci.yml`.
+      Uses the runners' preinstalled Rust and only first-party actions (`checkout`, `cache`), so
+      there are no third-party actions in the supply chain. `fail-fast: false`, so one platform
+      failing doesn't hide the others.
+- [x] **Install native deps in CI** so the workflow doubles as executable setup documentation.
       A cold clone needs GTK and WebKitGTK headers that `Cargo.toml` can't declare; without them
       `gdk-sys` fails at `pkg-config --libs --cflags gdk-3.0` with a message that never names the
-      fix. Now written down in `docs/getting-started.md`, but documentation rots — CI wouldn't.
-- [ ] **Headless-capable test lane.** Windowed tests need a display; sort out `xvfb` on Linux or
-      gate the windowed suite so the rest can run everywhere.
+      fix. Documented in `docs/getting-started.md`, but documentation rots — CI won't.
+- [x] **Headless-capable test lane.** Turned out to need nothing: no surviving test creates a
+      window, verified by running the full suite with no `DISPLAY` and no X server. The only
+      window-creating tests lived in `browser/native_ui.rs`, which was dead code and is now gone.
+      Had it ever been wired up it would have failed on every runner without a display.
+- [x] **Watch the first macOS and Windows runs.** All three platforms compiled on the first run:
+      Linux 2m06s, macOS 1m20s, Windows 3m07s. That retires the "cross-platform is unproven"
+      caveat for the build; the test lane is covered below.
+- [x] **Fixed a test hang the matrix caught.** The three MCP protocol tests spawned
+      `cargo run` from inside `cargo test`, so the child contended for cargo's build-directory
+      lock and never started while the parent blocked on a `read_line()` with no timeout. All
+      three platforms hung. Locally it had passed — a fully warm `target/` let the child win the
+      race, which is exactly the kind of environment-dependent flake CI exists to expose. Fixed by
+      spawning `env!("CARGO_BIN_EXE_tinker")`, the binary cargo has already built: no nested cargo,
+      no lock contention. Test execution went from 16.61s to 0.04s.
+- [x] **Bounded job runtime** with `timeout-minutes: 30`, so a future hang fails in half an hour
+      rather than occupying a runner until GitHub's six-hour ceiling.
+- [ ] **Consider committing `Cargo.lock`.** It's currently gitignored. For a library that's
+      conventional; for an application it means CI builds aren't reproducible and can break when a
+      transitive dependency publishes. It also costs cache precision — the CI cache key falls back
+      to hashing `Cargo.toml`.
 - [ ] **Resolve `src/platform/`.** With Windows a real target, decide: finish the abstraction for
       what `tao`/`wry` genuinely don't cover (native chrome, theming, window handles), or delete it.
       Don't leave commented-out traits sitting there for another year. Nine other dead modules
       have now been removed for the same reason; this is the last of them, and the only one with a
       plausible future.
-- [ ] **Deduplicate the module tree.** `main.rs` declares `api`, `browser`, `event`, and
-      `templates`, all of which `lib.rs` already exports — so the crate is compiled twice and
-      shared tests execute twice (48 in the lib binary, 63 in the bin, largely overlapping).
-      `main.rs` should depend on the library rather than re-declaring its modules. Note `mcp`
-      lives only in `main.rs` and `platform` only in `lib.rs`, so this needs care, not a blind
-      delete.
+- [x] **Deduplicated the module tree.** `main.rs` declared `api`, `browser`, `event`, and
+      `templates`, all of which `lib.rs` already exported, so the crate compiled twice and every
+      shared test ran once per target. `mcp` moved into the library (it was declared only in
+      `main.rs`), and the binary now links against the library instead of re-declaring modules.
+      `platform` stays library-only as before.
+
+      | | Before | After |
+      |---|---|---|
+      | Incremental rebuild after touching `browser/mod.rs` | 21.5s | 4.0s |
+      | Warnings from the binary target | 91 | 2 |
+      | Test executions | 182 | 140 |
+      | **Unique test names** | **140** | **140** |
+
+      The drop in executions is the duplication disappearing, not lost coverage: comparing
+      `cargo test -- --list` before and after gives identical sets of 140 names. Earlier revisions
+      of this file quoted the inflated execution count as though it were a test count; 140 is the
+      real figure.
 - [ ] **Clear the warning backlog.** A clean build emits 32 warnings for the lib and 91 for the
       binary — unused imports, unused variables, dead constants in `templates/mod.rs`. Enough
-      noise to hide a real one.
+      noise to hide a real one. Deliberately not gated in CI yet: turning warnings into errors
+      today would make the workflow red on arrival.
+- [ ] **Decide on `rustfmt`.** The tree isn't format-clean (~688 diffs), so a `cargo fmt --check`
+      gate would fail immediately. Either format once in a single mechanical commit and gate it
+      afterwards, or drop the idea — but don't add the gate first.
 - [ ] **Tag v0.1.0** once the matrix is green. First point a user can be pointed at.
 
 ---
@@ -144,17 +230,53 @@ tests, DOM find/click/type, JavaScript execution, and network monitoring.
 
 ### M3 — Close the agent feedback loop
 
-- [ ] **Expose the observability suite over MCP.** Console logs, performance metrics, and Core Web
-      Vitals are all built and reachable via REST, but absent from the MCP tool list. An agent
-      currently can't ask "did that click throw a console error?" — the highest-value question it
-      could ask.
-- [ ] **Expose recording/replay over MCP.** Let an agent record its own session and replay it.
+- [x] **Expose the observability suite over MCP.** Nine tools added — four for console capture,
+      five for performance — taking the advertised surface from 16 tools to 25. All nine were
+      already reachable over REST; only the MCP binding was missing.
+      **Caveat, and it is a large one:** these tools can only *trigger* a query, not return its
+      answer. See the next item — until that is fixed, every `get_*` tool on the MCP surface is
+      half a feature.
+- [x] **Expose recording/replay over MCP.** Eight tools: start/stop recording, save/load to file,
+      start/stop playback, playback state, and a single `step_playback` taking a direction rather
+      than two separate verbs — an agent bisecting a failure thinks in terms of stepping. An unknown
+      direction is an error rather than a silent default, since stepping the wrong way would mislead
+      exactly the bisect it exists to serve.
+- [ ] **Make MCP tools return their results.** *Highest priority in this track; blocks the two
+      items below.* Every tool is currently fire-and-forget. `handle_tool_call` broadcasts a
+      `BrowserCommand` and returns the string `"Command '<name>' sent successfully"` — the code
+      carries the comment *"in a real implementation, we'd wait for the response"*. So
+      `get_console_logs` returns that sentence rather than any logs, and the same is true of
+      `get_core_web_vitals`, `get_page_info`, `find_element`, `execute_javascript`,
+      `take_screenshot`, and every other read.
+
+      The pieces exist but are not joined. The engine does publish results — `GetConsoleLogs`
+      emits a `ConsoleMessage` event per line, and there are `PerformanceMetricsCollected`,
+      `CoreWebVitalsUpdated`, and `MemoryMetricsUpdated` variants. `McpServer` even holds an
+      `event_rx: broadcast::Receiver<BrowserEvent>`. It is never read — the field is touched only
+      by the constructor.
+
+      The design problem is correlation. Events carry no request id, and some (`ConsoleMessage`)
+      are also emitted spontaneously by the page, so "collect events for N ms after sending" is
+      racy: it can capture unrelated traffic or miss a slow reply. Two candidate fixes, and this
+      needs a decision before code:
+      1. Add a correlation id to `BrowserCommand`/`BrowserEvent` and have the engine echo it.
+         Clean, but touches every command and event variant.
+      2. Have the MCP path call the engine's accessor methods directly rather than round-tripping
+         through the broadcast bus. Much smaller, but only works where MCP and the engine share a
+         process — which today they do.
+
+      Whichever is chosen, the wait needs a timeout. A blocking read with no deadline is the exact
+      failure that hung CI on all three platforms earlier in this milestone.
 - [ ] **Structured errors for agents.** Failures should return machine-readable causes, not prose.
+      Depends on the item above: there is no result path to put a structured error into yet.
 - [ ] **MCP resources and prompts.** `handle_resources_list` and `handle_prompts_list` return empty.
-      Resources could expose the live DOM, console buffer, and network log as readable context.
-- [ ] **Expose keyboard input.** `browser/keyboard.rs` handles shortcuts internally but is reachable
-      from neither the API nor MCP. Selector-based `click`/`type` can't test tab order, focus
-      traversal, or keyboard accessibility — those need real key events. Wanted by both tracks.
+      Resources would expose the live DOM, console buffer, and network log as readable context, so
+      an agent could pull state without a tool call per question. Blocked on the result path above:
+      `resources/read` has to return real content, and today nothing can.
+- [ ] **Page-level keyboard input** — see the note under "Not started". Wanted by both tracks, but
+      it needs a design decision first (native injection vs. driving the webview's own input path),
+      not just a binding. Do not scope this as "expose `keyboard.rs`"; that module solves a
+      different problem.
 - [ ] **Document the agent loop** in `docs/mcp-server.md`: act → observe → assert.
 
 ---
@@ -218,14 +340,34 @@ the useful half; evasion tooling is a different product with different obligatio
 Recorded so these don't get re-proposed.
 
 **Embedding multiple JS engines** (the old "JavaScript Engine Workshop": V8 integration,
-SpiderMonkey support, JavaScriptCore bridge, engine switching). Tinker is built on `wry`, which
-delegates to the OS webview and its bundled engine. You cannot swap V8 into the macOS build.
-SpiderMonkey is unavailable at any price — Gecko ships no embedding API of this kind, so Firefox
-coverage would mean abandoning `wry` entirely.
+SpiderMonkey support, JavaScriptCore bridge, engine switching).
 
-*The underlying goal survives as M4*, which gets cross-engine coverage from the CI matrix instead —
-real WebKit and real Chromium, in their shipping configurations, which is better evidence than
-embedded engines would have provided anyway.
+This was attempted. The `feat/js-engine-integration` branch (30 commits, January 2025) built
+`src/js_engine/` with a `JsEngine` trait and V8, JavaScriptCore, and SpiderMonkey implementations
+behind Cargo features. It was reviewed before this section was written, and it does not change the
+conclusion — it sharpens it.
+
+The decisive detail is what those implementations actually are. `SpiderMonkeyEngine` constructs a
+bare `mozjs::rust::Runtime` with `SIMPLE_GLOBAL_CLASS`; `JavaScriptCoreEngine` constructs a bare
+`javascriptcore_rs::Context`. Both are **standalone interpreters with no DOM** — no `window`, no
+`document`, no layout, no browser APIs. And in that branch's `Cargo.toml` they sit *alongside* the
+webview rather than replacing it: `webview = ["dep:wry", "dep:tao"]` and `v8 = ["dep:v8"]` are
+independent features. The embedded engines never render the page.
+
+That is fatal for the goal. Cross-browser bugs live in DOM behavior, layout, CSS, event handling,
+and browser API differences. A bare ECMAScript interpreter with no `document` cannot observe any of
+them. Even had the branch compiled — its own commit message says "Build currently failing, needs
+dependency fixes" — it would have answered a question nobody was asking: whether pure ECMAScript
+differs between engines, which is both rare and heavily standardized.
+
+*The underlying goal is already met by M2 and extended by M4.* The CI matrix runs real WebKit
+(Linux, macOS) and real Chromium/V8 (Windows) in their shipping configurations, rendering real
+pages. That is strictly better evidence than embedded engines could produce, and it exists today.
+
+**Worth salvaging separately:** that branch's Cargo feature reorganization — optional dependencies
+with granular `webview` / `cli` / `api` / `metrics` features — is sound practice independent of the
+engine work, and would cut build times for users who don't need every subsystem. Filed here rather
+than lost.
 
 **Full platform abstraction as originally scoped.** `tao` and `wry` already abstract windowing and
 webviews. M2 decides whether the thin remainder is worth keeping.

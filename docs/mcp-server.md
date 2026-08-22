@@ -49,6 +49,17 @@ The MCP server implements the Model Context Protocol specification, using JSON-R
 }
 ```
 
+## Known limitation: tools do not return results
+
+Every tool currently broadcasts its command to the browser and responds with
+`"Command '<name>' sent successfully"`. It does **not** return the command's
+result. Reads such as `get_console_logs`, `get_core_web_vitals`, `get_page_info`,
+and `execute_javascript` trigger the work, but the output is published to the
+event bus rather than returned to the caller.
+
+Use the REST API when you need the value back. This is the top priority in
+Track A of the [roadmap](../ROADMAP.md).
+
 ## Available Methods
 
 ### initialize
@@ -206,6 +217,60 @@ Execute JavaScript code in the page context.
 
 **Arguments:**
 - `script` (string, required): JavaScript code to execute
+
+### Recording & Replay
+
+#### start_recording
+Start recording browser events. Requires `name` and `start_url`.
+
+#### stop_recording
+Stop the active recording. No arguments.
+
+#### save_recording / load_recording
+Persist a recording to disk or read one back. Each requires `path`.
+
+#### start_playback / stop_playback
+Begin or halt replay of the loaded recording. No arguments.
+
+#### get_playback_state
+Current position, speed, and whether playback is running. No arguments.
+
+#### step_playback
+Step one event through the recording. Optional `direction` (`forward` or `backward`,
+default `forward`). An unrecognised direction is rejected rather than defaulted, so a
+typo can't silently step the wrong way during a bisect.
+
+### Console Monitoring
+
+#### start_console_monitoring
+Start capturing console output (log, info, warn, error) from the page. No arguments.
+
+#### stop_console_monitoring
+Stop capturing console output. No arguments.
+
+#### get_console_logs
+Retrieve captured console messages. Optional `level` (`log`, `info`, `warn`, `error`, `debug`);
+omit it to get everything. Use this after an interaction to check whether the page reported errors.
+
+#### clear_console_logs
+Clear the captured message buffer. No arguments.
+
+### Performance
+
+#### start_performance_monitoring
+Start collecting performance metrics. No arguments.
+
+#### stop_performance_monitoring
+Stop collecting performance metrics. No arguments.
+
+#### get_core_web_vitals
+Get Core Web Vitals for the current page (LCP, FID, CLS, INP, TTFB, FCP). No arguments.
+
+#### get_memory_metrics
+Get memory usage (JS heap, DOM nodes, event listeners). No arguments.
+
+#### get_performance_summary
+Get an aggregate performance summary. No arguments.
 
 ### Network Monitoring
 
