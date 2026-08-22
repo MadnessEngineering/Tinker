@@ -110,14 +110,46 @@ recorded elsewhere.
 Cross-engine testing (M4) is only meaningful if Tinker reliably runs on more than one platform.
 That makes this milestone load-bearing rather than housekeeping.
 
-- [ ] **GitHub Actions: build + test on macOS, Linux, Windows.** The suite passes and nothing runs
-      it. Start here.
-- [ ] **Install native deps in CI** so the workflow doubles as executable setup documentation.
+**The matrix is green.** As of August 22, 2026, Tinker builds and passes its full suite on all
+three platforms — the first time this has ever been verified:
+
+| Platform | Build | Test | Engine exercised |
+|---|---|---|---|
+| `ubuntu-latest` | 2m00s | 2s | WebKitGTK / JavaScriptCore |
+| `macos-latest` | 1m36s | 2s | WKWebView / JavaScriptCore |
+| `windows-latest` | 3m30s | 4s | WebView2 / V8 |
+
+That last column is the point: two engine families are already under test on every run. M4 is now
+a matter of comparing their results rather than acquiring the coverage.
+
+- [x] **GitHub Actions: build + test on macOS, Linux, Windows.** `.github/workflows/ci.yml`.
+      Uses the runners' preinstalled Rust and only first-party actions (`checkout`, `cache`), so
+      there are no third-party actions in the supply chain. `fail-fast: false`, so one platform
+      failing doesn't hide the others.
+- [x] **Install native deps in CI** so the workflow doubles as executable setup documentation.
       A cold clone needs GTK and WebKitGTK headers that `Cargo.toml` can't declare; without them
       `gdk-sys` fails at `pkg-config --libs --cflags gdk-3.0` with a message that never names the
-      fix. Now written down in `docs/getting-started.md`, but documentation rots — CI wouldn't.
-- [ ] **Headless-capable test lane.** Windowed tests need a display; sort out `xvfb` on Linux or
-      gate the windowed suite so the rest can run everywhere.
+      fix. Documented in `docs/getting-started.md`, but documentation rots — CI won't.
+- [x] **Headless-capable test lane.** Turned out to need nothing: no surviving test creates a
+      window, verified by running the full suite with no `DISPLAY` and no X server. The only
+      window-creating tests lived in `browser/native_ui.rs`, which was dead code and is now gone.
+      Had it ever been wired up it would have failed on every runner without a display.
+- [x] **Watch the first macOS and Windows runs.** All three platforms compiled on the first run:
+      Linux 2m06s, macOS 1m20s, Windows 3m07s. That retires the "cross-platform is unproven"
+      caveat for the build; the test lane is covered below.
+- [x] **Fixed a test hang the matrix caught.** The three MCP protocol tests spawned
+      `cargo run` from inside `cargo test`, so the child contended for cargo's build-directory
+      lock and never started while the parent blocked on a `read_line()` with no timeout. All
+      three platforms hung. Locally it had passed — a fully warm `target/` let the child win the
+      race, which is exactly the kind of environment-dependent flake CI exists to expose. Fixed by
+      spawning `env!("CARGO_BIN_EXE_tinker")`, the binary cargo has already built: no nested cargo,
+      no lock contention. Test execution went from 16.61s to 0.04s.
+- [x] **Bounded job runtime** with `timeout-minutes: 30`, so a future hang fails in half an hour
+      rather than occupying a runner until GitHub's six-hour ceiling.
+- [ ] **Consider committing `Cargo.lock`.** It's currently gitignored. For a library that's
+      conventional; for an application it means CI builds aren't reproducible and can break when a
+      transitive dependency publishes. It also costs cache precision — the CI cache key falls back
+      to hashing `Cargo.toml`.
 - [ ] **Resolve `src/platform/`.** With Windows a real target, decide: finish the abstraction for
       what `tao`/`wry` genuinely don't cover (native chrome, theming, window handles), or delete it.
       Don't leave commented-out traits sitting there for another year. Nine other dead modules
@@ -131,7 +163,11 @@ That makes this milestone load-bearing rather than housekeeping.
       delete.
 - [ ] **Clear the warning backlog.** A clean build emits 32 warnings for the lib and 91 for the
       binary — unused imports, unused variables, dead constants in `templates/mod.rs`. Enough
-      noise to hide a real one.
+      noise to hide a real one. Deliberately not gated in CI yet: turning warnings into errors
+      today would make the workflow red on arrival.
+- [ ] **Decide on `rustfmt`.** The tree isn't format-clean (~688 diffs), so a `cargo fmt --check`
+      gate would fail immediately. Either format once in a single mechanical commit and gate it
+      afterwards, or drop the idea — but don't add the gate first.
 - [ ] **Tag v0.1.0** once the matrix is green. First point a user can be pointed at.
 
 ---
