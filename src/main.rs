@@ -2,14 +2,12 @@ use clap::Parser;
 use tracing::{debug, error, info};
 use std::{sync::{Arc, Mutex}, env};
 
-mod api;
-mod browser;
-mod event;
-mod mcp;
-mod templates;
-
-use crate::{
-    browser::{BrowserEngine, session::default_session_path},
+// The binary links against the library rather than re-declaring its modules.
+// Declaring them here as well compiled the whole crate a second time and ran
+// every shared test twice, once per target.
+use tinker::{
+    api, mcp,
+    browser::{session::default_session_path, BrowserEngine},
     event::EventSystem,
 };
 

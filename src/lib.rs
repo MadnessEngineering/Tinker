@@ -1,6 +1,7 @@
 pub mod api;
 pub mod browser;
 pub mod event;
+pub mod mcp;
 pub mod platform;
 pub mod templates;
 

@@ -192,7 +192,7 @@ Tinker works and is useful, with the caveats below. Status here is kept
 honest against the code — see the [roadmap](ROADMAP.md) for a per-module
 breakdown citing implementing files and test counts.
 
-**Verified**: August 22, 2026 · ~70 browser commands · `cargo test` → 164 passed, 3 ignored
+**Verified**: August 22, 2026 · ~70 browser commands · `cargo test` → 140 passed, 0 failed
 
 ### What works
 

@@ -16,7 +16,7 @@ Both sit on one core engine. Work that serves both lives in **Shared Foundation*
 ## Where Tinker actually stands
 
 The engine dispatches ~70 `BrowserCommand` variants (`src/event/mod.rs`), all handled in
-`src/browser/mod.rs`. `cargo test` reports **177 passed, 0 failed, 0 ignored**, verified on Linux
+`src/browser/mod.rs`. `cargo test` reports **140 passed, 0 failed, 0 ignored**, verified on Linux
 and green on all three CI platforms, August 22, 2026.
 
 Counts below are of tests that actually execute. An earlier revision of this file over-counted by
@@ -31,7 +31,7 @@ including tests in files that were never compiled — see the dead-modules entry
 | MQTT event tower + reconnection | `event/mod.rs` | 4 |
 | REST API | `api/mod.rs` | — |
 | WebSocket live control (`/ws`) | `api/mod.rs` | — |
-| MCP server (JSON-RPC 2.0 over stdio), 33 tools | `mcp/mod.rs` | 44 |
+| MCP server (JSON-RPC 2.0 over stdio), 33 tools; reads answered locally | `mcp/mod.rs` | 49 |
 | DOM inspector (CSS/XPath/text), interaction, waits | `browser/inspector.rs` | 2 |
 | JavaScript execution | `browser/mod.rs` | — |
 | Visual baselines + pixel diffing | `browser/visual.rs` | 2 |
@@ -194,12 +194,23 @@ a matter of comparing their results rather than acquiring the coverage.
       Don't leave commented-out traits sitting there for another year. Nine other dead modules
       have now been removed for the same reason; this is the last of them, and the only one with a
       plausible future.
-- [ ] **Deduplicate the module tree.** `main.rs` declares `api`, `browser`, `event`, and
-      `templates`, all of which `lib.rs` already exports — so the crate is compiled twice and
-      shared tests execute twice (48 in the lib binary, 63 in the bin, largely overlapping).
-      `main.rs` should depend on the library rather than re-declaring its modules. Note `mcp`
-      lives only in `main.rs` and `platform` only in `lib.rs`, so this needs care, not a blind
-      delete.
+- [x] **Deduplicated the module tree.** `main.rs` declared `api`, `browser`, `event`, and
+      `templates`, all of which `lib.rs` already exported, so the crate compiled twice and every
+      shared test ran once per target. `mcp` moved into the library (it was declared only in
+      `main.rs`), and the binary now links against the library instead of re-declaring modules.
+      `platform` stays library-only as before.
+
+      | | Before | After |
+      |---|---|---|
+      | Incremental rebuild after touching `browser/mod.rs` | 21.5s | 4.0s |
+      | Warnings from the binary target | 91 | 2 |
+      | Test executions | 182 | 140 |
+      | **Unique test names** | **140** | **140** |
+
+      The drop in executions is the duplication disappearing, not lost coverage: comparing
+      `cargo test -- --list` before and after gives identical sets of 140 names. Earlier revisions
+      of this file quoted the inflated execution count as though it were a test count; 140 is the
+      real figure.
 - [ ] **Clear the warning backlog.** A clean build emits 32 warnings for the lib and 91 for the
       binary — unused imports, unused variables, dead constants in `templates/mod.rs`. Enough
       noise to hide a real one. Deliberately not gated in CI yet: turning warnings into errors
