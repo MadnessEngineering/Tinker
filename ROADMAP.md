@@ -19,14 +19,14 @@ The engine dispatches ~70 `BrowserCommand` variants (`src/event/mod.rs`), all ha
 `src/browser/mod.rs`. `cargo test` reports **164 passed, 0 failed, 3 ignored** (the ignored three
 spawn the built binary). Verified on Linux, August 22, 2026.
 
-Note the executed count exceeds the number of `#[test]` functions in the tree: `main.rs` re-declares
-modules `lib.rs` already exports, so their tests run in both binaries. See M2.
+Counts below are of tests that actually execute. An earlier revision of this file over-counted by
+including tests in files that were never compiled — see the note on dead modules under M2.
 
 ### Built and wired
 
 | Capability | Implementation | Tests |
 |---|---|---|
-| Tabs, navigation, per-tab history | `browser/tabs.rs`, `browser/navigation.rs` | 14 |
+| Tabs, navigation, per-tab history | `browser/tabs.rs` | 9 |
 | Session persistence across launches | `browser/session.rs` | 3 |
 | MQTT event tower + reconnection | `event/mod.rs` | 4 |
 | REST API | `api/mod.rs` | — |
@@ -44,9 +44,10 @@ modules `lib.rs` already exports, so their tests run in both binaries. See M2.
 
 - **Assertions in recordings.** `AddRecordingAssertion` exists and stores expected state; there's
   no authoring UX and no pass/fail surfacing.
-- **Platform layer.** `src/platform/` has `common.rs` and `macos.rs` (124 lines), but every trait
-  in `mod.rs` is commented out and there is no `windows.rs` or `linux.rs`. Currently dead weight —
-  see M2, where cross-engine work forces a decision on it.
+- **Platform layer.** `src/platform/` is down to `mod.rs` and `common.rs`; every trait in `mod.rs`
+  is still commented out and there is no per-platform implementation. `tao`/`wry` already cover
+  windowing and webviews, so the open question is whether anything remains for this layer to do —
+  see M2.
 
 ### Not started
 
@@ -79,15 +80,28 @@ The code had outrun its documentation by about a year. Completed:
 - [x] **Removed session cruft** from version control and extended `.gitignore` to keep it out.
 - [x] **Consolidated the root Python scripts** into `tests/integration/` with a README covering
       prerequisites and what each one exercises.
-- [x] **Deleted two dead modules.** `src/browser/tests.rs` and `src/cli/` were declared in neither
-      `lib.rs` nor `main.rs` — they had never compiled. `src/cli/mod.rs` was the more dangerous of
-      the two: a stub `Args::parse()` returning defaults and ignoring all input, shadowed by the
-      real clap parser in `main.rs`, and an easy trap for anyone who found it first.
+- [x] **Removed nine dead modules** totalling ~1,100 lines: `browser/tests.rs`, `src/cli/`,
+      `browser/{navigation,window_manager,state_manager,menu,native_ui,error}.rs`, and
+      `platform/macos.rs`. None was declared in `lib.rs`, `main.rs`, or any `mod.rs`, so none had
+      ever compiled. Two details made this more than tidying:
+      `src/cli/mod.rs` held a stub `Args::parse()` returning defaults and ignoring all input,
+      shadowed by the real clap parser in `main.rs` — an easy trap for anyone who found it first.
+      And `browser/error.rs` was imported only by `navigation.rs`, `window_manager.rs`, and
+      `state_manager.rs`, themselves dead, making the cluster self-referential and invisible to a
+      naive "is this imported?" check. The test result was identical before and after
+      (167 passed), confirming the ~21 `#[test]` functions inside had never run. Git history
+      retains them if any turn out to be worth reviving.
 - [x] **Wrote `docs/getting-started.md`** with the native dependencies, the exact failure they
       cause, and package names for Debian/Fedora/Arch.
 
 `LESSONS_LEARNED.md` was kept — its testing and thread-safety notes are still true and aren't
 recorded elsewhere.
+
+> **A caution on the table above.** It was first drafted from a static scan of the tree, and the
+> scan was wrong twice: it credited `browser/navigation.rs` with per-tab history (that file never
+> compiled — the implementation is in `browser/tabs.rs`) and counted `#[test]` functions in files
+> that were never built. Both were caught only by running a real build. Citing files is worth
+> doing, but a citation is only as good as the build you checked it against.
 
 ---
 
@@ -106,16 +120,18 @@ That makes this milestone load-bearing rather than housekeeping.
       gate the windowed suite so the rest can run everywhere.
 - [ ] **Resolve `src/platform/`.** With Windows a real target, decide: finish the abstraction for
       what `tao`/`wry` genuinely don't cover (native chrome, theming, window handles), or delete it.
-      Don't leave commented-out traits sitting there for another year. M1 removed two other dead
-      modules for the same reason; this is the last one, and the only one with a plausible future.
+      Don't leave commented-out traits sitting there for another year. Nine other dead modules
+      have now been removed for the same reason; this is the last of them, and the only one with a
+      plausible future.
 - [ ] **Deduplicate the module tree.** `main.rs` declares `api`, `browser`, `event`, and
       `templates`, all of which `lib.rs` already exports — so the crate is compiled twice and
       shared tests execute twice (48 in the lib binary, 63 in the bin, largely overlapping).
       `main.rs` should depend on the library rather than re-declaring its modules. Note `mcp`
       lives only in `main.rs` and `platform` only in `lib.rs`, so this needs care, not a blind
       delete.
-- [ ] **Clear the warning backlog.** A clean build emits 91 warnings — unused imports, unused
-      variables, dead constants in `templates/mod.rs`. Enough noise to hide a real one.
+- [ ] **Clear the warning backlog.** A clean build emits 32 warnings for the lib and 91 for the
+      binary — unused imports, unused variables, dead constants in `templates/mod.rs`. Enough
+      noise to hide a real one.
 - [ ] **Tag v0.1.0** once the matrix is green. First point a user can be pointed at.
 
 ---
