@@ -56,7 +56,9 @@ mod console;
 pub mod keyboard;
 pub mod session;
 
-use self::{
+// Publicly re-exported so the MCP server can hold the same shared state the
+// engine does and answer reads directly rather than through the event bus.
+pub use self::{
     tabs::TabManager,
     event_viewer::EventViewer,
     tab_ui::{TabBar, TabCommand},

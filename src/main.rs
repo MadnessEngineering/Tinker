@@ -233,12 +233,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.mcp {
             let command_tx_clone = command_tx.clone();
             let event_rx_clone = event_rx.resubscribe();
+            // Share the engine's own state with the MCP server so read tools can
+            // return real values. Both live in this process; the server just runs
+            // on another thread.
+            let mcp_state = mcp::BrowserState {
+                console: browser.console_monitor.clone(),
+                performance: browser.performance_monitor.clone(),
+                network: browser.network_monitor.clone(),
+                player: browser.player.clone(),
+            };
             info!("🚀 Starting MCP server on stdio");
             info!("📡 MCP server ready for JSON-RPC protocol messages");
 
             // MCP server must run on a separate thread since it blocks on stdin
             std::thread::spawn(move || {
-                let mut mcp_server = mcp::McpServer::new(command_tx_clone, event_rx_clone);
+                let mut mcp_server = mcp::McpServer::new(command_tx_clone, event_rx_clone)
+                    .with_state(mcp_state);
                 if let Err(e) = mcp_server.run() {
                     error!("MCP server error: {}", e);
                 }

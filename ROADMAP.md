@@ -49,6 +49,40 @@ including tests in files that were never compiled — see the dead-modules entry
   windowing and webviews, so the open question is whether anything remains for this layer to do —
   see M2.
 
+### Known bug: `--mcp` requires a display
+
+`--mcp` still starts the browser engine, which initialises GTK and aborts the process when no
+display is available:
+
+```
+(tinker:32374): Gtk-WARNING **: cannot open display:
+```
+
+This races the MCP thread. If the server writes its JSON-RPC response before the main thread
+reaches GTK, the call succeeds; otherwise the process dies mid-reply and the client reads an empty
+line. Measured on Linux with no `DISPLAY`:
+
+| Invocation | Failure rate |
+|---|---|
+| Sequential | 0 / 20 |
+| 3 concurrent | 11 / 24 |
+| 3 concurrent, `--headless` | 3 / 12 |
+
+`--headless` reduces the window but does not close it, so it is not a workaround. It is not a
+concurrency bug either — concurrency only changes which side of the race wins, and more runner
+capacity would not help.
+
+Two consequences worth stating plainly:
+
+1. **It affects real use.** The Claude Desktop configuration in the readme runs `--mcp` over stdio.
+   On a headless machine that is the failing case, not an edge case.
+2. **It is a latent CI flake.** `tests/mcp_tests.rs` spawns three of these concurrently, which is
+   exactly the ~45% case. CI has passed six consecutive runs on luck, not correctness, and will go
+   red eventually. Treat an unexplained red on those three tests as this bug, not a new regression.
+
+The fix is for `--mcp` (and arguably `--headless`) to skip window creation entirely rather than
+initialising a webview it never shows. Deferred by request.
+
 ### Not started
 
 - Test generation from recordings.

@@ -10,7 +10,31 @@ use std::io::{self, BufRead, Write};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 
+use std::sync::{Arc, Mutex};
+
+use crate::browser::{ConsoleLevel, ConsoleMonitor, EventPlayer, NetworkMonitor, PerformanceMonitor};
 use crate::event::{BrowserCommand, BrowserEvent};
+
+/// Shared browser state the MCP server can read directly.
+///
+/// Tools cannot answer reads by round-tripping the broadcast bus: `BrowserEvent`
+/// carries no request id, and some variants (`ConsoleMessage`) are emitted
+/// spontaneously by the page, so correlating a reply to a request by time window
+/// is racy in both directions. The MCP server runs on its own thread inside the
+/// same process as the engine, so it can instead hold the same `Arc<Mutex<..>>`
+/// handles the engine holds and read them directly.
+///
+/// This covers state the engine owns. It deliberately does not cover reads that
+/// need the WebView itself -- `get_page_info`, `execute_javascript`,
+/// `find_element`, `take_screenshot` -- because those must run on the thread
+/// owning the window, and they stay fire-and-forget for now.
+#[derive(Clone)]
+pub struct BrowserState {
+    pub console: Arc<Mutex<ConsoleMonitor>>,
+    pub performance: Arc<Mutex<PerformanceMonitor>>,
+    pub network: Arc<Mutex<NetworkMonitor>>,
+    pub player: Arc<Mutex<EventPlayer>>,
+}
 
 /// MCP protocol version
 const MCP_VERSION: &str = "2024-11-05";
@@ -48,6 +72,9 @@ struct JsonRpcError {
 pub struct McpServer {
     command_tx: broadcast::Sender<BrowserCommand>,
     event_rx: broadcast::Receiver<BrowserEvent>,
+    /// Present when the server shares a process with a running engine. Without
+    /// it, reads fall back to the fire-and-forget path.
+    state: Option<BrowserState>,
 }
 
 impl McpServer {
@@ -59,7 +86,109 @@ impl McpServer {
         Self {
             command_tx,
             event_rx,
+            state: None,
         }
+    }
+
+    /// Attach shared engine state so reads return real values instead of an
+    /// acknowledgement. Call this when the server runs in-process with an engine.
+    pub fn with_state(mut self, state: BrowserState) -> Self {
+        self.state = Some(state);
+        self
+    }
+
+    /// Answer a read from shared state, if this tool is one that can be.
+    ///
+    /// Returns `Ok(None)` when the tool isn't a local read or no state is
+    /// attached, in which case the caller falls back to broadcasting a command.
+    fn try_local_read(
+        &self,
+        tool_name: &str,
+        arguments: &Value,
+    ) -> Result<Option<Value>, JsonRpcError> {
+        let Some(state) = &self.state else {
+            return Ok(None);
+        };
+
+        // A poisoned lock means another thread panicked holding it. Surface that
+        // as an error rather than panicking the MCP server too.
+        fn lock_err(what: &str) -> JsonRpcError {
+            JsonRpcError {
+                code: -32603,
+                message: format!("Failed to lock {}", what),
+                data: None,
+            }
+        }
+
+        let value = match tool_name {
+            "get_console_logs" => {
+                let level = arguments
+                    .get("level")
+                    .and_then(|v| v.as_str())
+                    .and_then(ConsoleLevel::from_str);
+                let monitor = state.console.lock().map_err(|_| lock_err("console monitor"))?;
+                let messages = monitor.get_messages(level);
+                json!({ "count": messages.len(), "messages": messages })
+            }
+            "get_core_web_vitals" => {
+                let monitor = state
+                    .performance
+                    .lock()
+                    .map_err(|_| lock_err("performance monitor"))?;
+                json!(monitor.get_core_web_vitals())
+            }
+            "get_memory_metrics" => {
+                let monitor = state
+                    .performance
+                    .lock()
+                    .map_err(|_| lock_err("performance monitor"))?;
+                match monitor.get_latest_memory() {
+                    Some(metrics) => json!(metrics),
+                    // No snapshot yet is a legitimate state, not an error.
+                    None => json!(null),
+                }
+            }
+            "get_performance_summary" => {
+                let monitor = state
+                    .performance
+                    .lock()
+                    .map_err(|_| lock_err("performance monitor"))?;
+                json!(monitor.get_summary())
+            }
+            "get_network_stats" => {
+                let monitor = state.network.lock().map_err(|_| lock_err("network monitor"))?;
+                json!(monitor.get_stats())
+            }
+            "export_network_har" => {
+                let monitor = state.network.lock().map_err(|_| lock_err("network monitor"))?;
+                let har = monitor.export_har().map_err(|e| JsonRpcError {
+                    code: -32603,
+                    message: format!("Failed to export HAR: {}", e),
+                    data: None,
+                })?;
+                json!({ "har": har })
+            }
+            "get_playback_state" => {
+                let player = state.player.lock().map_err(|_| lock_err("player"))?;
+                // PlaybackState alone isn't much use to an agent deciding what to
+                // do next; position and counts are what it actually needs.
+                json!({
+                    "state": format!("{:?}", player.get_state()),
+                    "position_ms": player.get_position(),
+                    "duration_ms": player.get_duration(),
+                    "current_index": player.get_current_index(),
+                    "event_count": player.get_event_count(),
+                })
+            }
+            _ => return Ok(None),
+        };
+
+        Ok(Some(json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
+            }]
+        })))
     }
 
     /// Run the MCP server (blocking)
@@ -543,6 +672,13 @@ impl McpServer {
 
         debug!("Tool call: {} with args: {:?}", tool_name, arguments);
 
+        // Reads answerable from shared state return the value itself. Everything
+        // else falls through to the broadcast path below, which can only
+        // acknowledge that the command was sent.
+        if let Some(result) = self.try_local_read(tool_name, &arguments)? {
+            return Ok(result);
+        }
+
         let command = match tool_name {
             "navigate" => {
                 let url = arguments["url"].as_str().ok_or_else(|| JsonRpcError {
@@ -1008,6 +1144,133 @@ mod tests {
 
         let result = server.handle_tool_call(Some(params));
         assert!(result.is_ok());
+    }
+
+    /// A server with shared state, plus the state so a test can populate it.
+    fn setup_server_with_state(
+    ) -> (McpServer, BrowserState, broadcast::Receiver<BrowserCommand>) {
+        use crate::browser::{ConsoleMessage, NetworkMonitor, PerformanceMonitor};
+        // The receiver is returned rather than dropped: with no subscribers,
+        // broadcast::send fails and every action tool would error.
+        let (command_tx, command_rx) = broadcast::channel(100);
+        let (_event_tx, event_rx) = broadcast::channel(100);
+        let state = BrowserState {
+            console: Arc::new(Mutex::new(ConsoleMonitor::new())),
+            performance: Arc::new(Mutex::new(PerformanceMonitor::new())),
+            network: Arc::new(Mutex::new(NetworkMonitor::new())),
+            player: Arc::new(Mutex::new(EventPlayer::new())),
+        };
+        let _ = ConsoleMessage::new(ConsoleLevel::Log, String::new(), vec![]);
+        (
+            McpServer::new(command_tx, event_rx).with_state(state.clone()),
+            state,
+            command_rx,
+        )
+    }
+
+    /// The point of the whole local-read path: a read must come back with the
+    /// data, not with "Command 'x' sent successfully".
+    #[test]
+    fn test_get_console_logs_returns_actual_messages() {
+        use crate::browser::ConsoleMessage;
+        let (mut server, state, _rx) = setup_server_with_state();
+
+        {
+            let mut monitor = state.console.lock().unwrap();
+            monitor.add_message(ConsoleMessage::new(
+                ConsoleLevel::Error,
+                "TypeError: undefined is not a function".to_string(),
+                vec![],
+            ));
+            monitor.add_message(ConsoleMessage::new(
+                ConsoleLevel::Log,
+                "hello".to_string(),
+                vec![],
+            ));
+        }
+
+        let params = json!({ "name": "get_console_logs", "arguments": {} });
+        let result = server.handle_tool_call(Some(params)).unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+
+        assert!(
+            !text.contains("sent successfully"),
+            "read returned an acknowledgement instead of data: {}",
+            text
+        );
+        let payload: Value = serde_json::from_str(text).expect("read should return JSON");
+        assert_eq!(payload["count"], 2);
+        assert!(text.contains("TypeError: undefined is not a function"));
+    }
+
+    #[test]
+    fn test_get_console_logs_level_filter_applies_to_real_data() {
+        use crate::browser::ConsoleMessage;
+        let (mut server, state, _rx) = setup_server_with_state();
+
+        {
+            let mut monitor = state.console.lock().unwrap();
+            monitor.add_message(ConsoleMessage::new(
+                ConsoleLevel::Error,
+                "boom".to_string(),
+                vec![],
+            ));
+            monitor.add_message(ConsoleMessage::new(
+                ConsoleLevel::Log,
+                "chatter".to_string(),
+                vec![],
+            ));
+        }
+
+        let params = json!({
+            "name": "get_console_logs",
+            "arguments": { "level": "error" }
+        });
+        let result = server.handle_tool_call(Some(params)).unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+
+        assert!(text.contains("boom"), "error message missing: {}", text);
+        assert!(!text.contains("chatter"), "filter did not exclude lower level: {}", text);
+    }
+
+    #[test]
+    fn test_playback_state_read_returns_position_not_ack() {
+        let (mut server, _state, _rx) = setup_server_with_state();
+
+        let params = json!({ "name": "get_playback_state", "arguments": {} });
+        let result = server.handle_tool_call(Some(params)).unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+
+        let payload: Value = serde_json::from_str(text).expect("read should return JSON");
+        // The bare enum isn't enough for an agent to decide what to do next.
+        for key in ["state", "position_ms", "duration_ms", "current_index", "event_count"] {
+            assert!(!payload[key].is_null(), "{} missing from playback state", key);
+        }
+    }
+
+    /// Actions still broadcast; only reads are answered locally.
+    #[test]
+    fn test_actions_still_broadcast_with_state_attached() {
+        let (mut server, _state, _rx) = setup_server_with_state();
+
+        let params = json!({
+            "name": "navigate",
+            "arguments": { "url": "https://example.com" }
+        });
+        let result = server.handle_tool_call(Some(params)).unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("sent successfully"), "expected an ack, got: {}", text);
+    }
+
+    /// Without state the server must still work, just without real reads.
+    #[test]
+    fn test_reads_fall_back_to_ack_without_state() {
+        let (mut server, _rx) = setup_test_server();
+
+        let params = json!({ "name": "get_console_logs", "arguments": {} });
+        let result = server.handle_tool_call(Some(params)).unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("sent successfully"));
     }
 
     #[test]
