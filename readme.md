@@ -175,6 +175,7 @@ Then ask Claude to control the browser:
 - **Network**: start_network_monitoring, stop_network_monitoring, get_network_stats, export_network_har
 - **Console**: start_console_monitoring, stop_console_monitoring, get_console_logs, clear_console_logs
 - **Performance**: start_performance_monitoring, stop_performance_monitoring, get_core_web_vitals, get_memory_metrics, get_performance_summary
+- **Recording & Replay**: start_recording, stop_recording, save_recording, load_recording, start_playback, stop_playback, get_playback_state, step_playback
 
 See [MCP Server Documentation](docs/mcp-server.md) for complete details.
 
@@ -222,8 +223,6 @@ breakdown citing implementing files and test counts.
 - **Keyboard input isn't exposed.** `browser/keyboard.rs` handles shortcuts
   internally but isn't reachable over the API or MCP, so keyboard-driven
   testing (tab order, accessibility) isn't scriptable yet.
-- **Recording/replay isn't exposed over MCP.** Reachable over REST only, so an
-  agent can't record or replay its own session.
 - **Assertions are minimal.** Recordings can store expected state, but there's
   no authoring UX and no pass/fail surfacing.
 

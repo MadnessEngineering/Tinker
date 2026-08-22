@@ -16,11 +16,11 @@ Both sit on one core engine. Work that serves both lives in **Shared Foundation*
 ## Where Tinker actually stands
 
 The engine dispatches ~70 `BrowserCommand` variants (`src/event/mod.rs`), all handled in
-`src/browser/mod.rs`. `cargo test` reports **164 passed, 0 failed, 3 ignored** (the ignored three
-spawn the built binary). Verified on Linux, August 22, 2026.
+`src/browser/mod.rs`. `cargo test` reports **177 passed, 0 failed, 0 ignored**, verified on Linux
+and green on all three CI platforms, August 22, 2026.
 
 Counts below are of tests that actually execute. An earlier revision of this file over-counted by
-including tests in files that were never compiled — see the note on dead modules under M2.
+including tests in files that were never compiled — see the dead-modules entry under M1.
 
 ### Built and wired
 
@@ -31,14 +31,14 @@ including tests in files that were never compiled — see the note on dead modul
 | MQTT event tower + reconnection | `event/mod.rs` | 4 |
 | REST API | `api/mod.rs` | — |
 | WebSocket live control (`/ws`) | `api/mod.rs` | — |
-| MCP server (JSON-RPC 2.0 over stdio) | `mcp/mod.rs` | 34 |
+| MCP server (JSON-RPC 2.0 over stdio), 33 tools | `mcp/mod.rs` | 44 |
 | DOM inspector (CSS/XPath/text), interaction, waits | `browser/inspector.rs` | 2 |
 | JavaScript execution | `browser/mod.rs` | — |
 | Visual baselines + pixel diffing | `browser/visual.rs` | 2 |
 | Network monitoring + HAR export + filters | `browser/network.rs` | 2 |
-| Console monitoring + filtering | `browser/console.rs` | 9 |
-| Performance: Core Web Vitals, memory, JS profiling, marks/measures | `browser/performance.rs` | 28 |
-| Recording + replay: seek, step forward/back, speed, loop | `browser/replay.rs` | 5 |
+| Console monitoring + filtering (REST + MCP) | `browser/console.rs` | 9 |
+| Performance: Core Web Vitals, memory, JS profiling, marks/measures (REST + MCP) | `browser/performance.rs` | 28 |
+| Recording + replay: seek, step forward/back, speed, loop (REST + MCP) | `browser/replay.rs` | 5 |
 
 ### Partial
 
@@ -51,10 +51,15 @@ including tests in files that were never compiled — see the note on dead modul
 
 ### Not started
 
-- CI of any kind. No `.github/workflows`.
 - Test generation from recordings.
 - Report/export layer.
-- Keyboard input over the API or MCP (`browser/keyboard.rs` is internal-only).
+- Page-level keyboard input. Note `browser/keyboard.rs` is *not* this: it maps chrome shortcuts
+  (Ctrl+T, Alt+Left) to browser commands that the API already exposes directly, so binding it
+  would add no capability. Testing tab order, focus traversal, and keyboard accessibility needs
+  events dispatched into the page — and synthetic `KeyboardEvent`s injected via JavaScript won't
+  do it, because browsers refuse default actions like focus movement for untrusted events. This
+  needs native input injection at the webview layer, which `wry` doesn't currently expose. Design
+  work before code.
 - Browser profiles — user agent, viewport, timezone, locale.
 - Cross-engine result comparison (see Track B, M4).
 
@@ -184,13 +189,18 @@ tests, DOM find/click/type, JavaScript execution, and network monitoring.
       five for performance — taking the advertised surface from 16 tools to 25. An agent can now
       ask "did that click throw a console error?", which it previously could not. All nine were
       already reachable over REST; only the MCP binding was missing.
-- [ ] **Expose recording/replay over MCP.** Let an agent record its own session and replay it.
+- [x] **Expose recording/replay over MCP.** Eight tools: start/stop recording, save/load to file,
+      start/stop playback, playback state, and a single `step_playback` taking a direction rather
+      than two separate verbs — an agent bisecting a failure thinks in terms of stepping. An unknown
+      direction is an error rather than a silent default, since stepping the wrong way would mislead
+      exactly the bisect it exists to serve.
 - [ ] **Structured errors for agents.** Failures should return machine-readable causes, not prose.
 - [ ] **MCP resources and prompts.** `handle_resources_list` and `handle_prompts_list` return empty.
       Resources could expose the live DOM, console buffer, and network log as readable context.
-- [ ] **Expose keyboard input.** `browser/keyboard.rs` handles shortcuts internally but is reachable
-      from neither the API nor MCP. Selector-based `click`/`type` can't test tab order, focus
-      traversal, or keyboard accessibility — those need real key events. Wanted by both tracks.
+- [ ] **Page-level keyboard input** — see the note under "Not started". Wanted by both tracks, but
+      it needs a design decision first (native injection vs. driving the webview's own input path),
+      not just a binding. Do not scope this as "expose `keyboard.rs`"; that module solves a
+      different problem.
 - [ ] **Document the agent loop** in `docs/mcp-server.md`: act → observe → assert.
 
 ---

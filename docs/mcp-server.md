@@ -207,6 +207,28 @@ Execute JavaScript code in the page context.
 **Arguments:**
 - `script` (string, required): JavaScript code to execute
 
+### Recording & Replay
+
+#### start_recording
+Start recording browser events. Requires `name` and `start_url`.
+
+#### stop_recording
+Stop the active recording. No arguments.
+
+#### save_recording / load_recording
+Persist a recording to disk or read one back. Each requires `path`.
+
+#### start_playback / stop_playback
+Begin or halt replay of the loaded recording. No arguments.
+
+#### get_playback_state
+Current position, speed, and whether playback is running. No arguments.
+
+#### step_playback
+Step one event through the recording. Optional `direction` (`forward` or `backward`,
+default `forward`). An unrecognised direction is rejected rather than defaulted, so a
+typo can't silently step the wrong way during a bisect.
+
 ### Console Monitoring
 
 #### start_console_monitoring

@@ -441,6 +441,78 @@ impl McpServer {
                 "Get memory usage for the current page (JS heap, DOM nodes, event listeners)",
                 json!({ "type": "object", "properties": {} }),
             ),
+            // Recording and replay. Lets an agent capture what it did and replay
+            // it deterministically — the difference between "it worked once" and
+            // a reproducible case.
+            self.tool_definition(
+                "start_recording",
+                "Start recording browser events into a named session",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Name for the recording" },
+                        "start_url": { "type": "string", "description": "URL to begin the recording at" }
+                    },
+                    "required": ["name", "start_url"]
+                }),
+            ),
+            self.tool_definition(
+                "stop_recording",
+                "Stop the active recording",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "save_recording",
+                "Save the current recording to a file",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "File path to write the recording to" }
+                    },
+                    "required": ["path"]
+                }),
+            ),
+            self.tool_definition(
+                "load_recording",
+                "Load a previously saved recording from a file",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "File path to read the recording from" }
+                    },
+                    "required": ["path"]
+                }),
+            ),
+            self.tool_definition(
+                "start_playback",
+                "Begin replaying the loaded recording",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "stop_playback",
+                "Stop replaying",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "get_playback_state",
+                "Get the current playback state (position, speed, whether running)",
+                json!({ "type": "object", "properties": {} }),
+            ),
+            self.tool_definition(
+                "step_playback",
+                "Step one event forward or backward through the recording. Use this to \
+                 narrow down which event in a reproduction causes a failure.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "direction": {
+                            "type": "string",
+                            "description": "Which way to step (default \"forward\")",
+                            "enum": ["forward", "backward"]
+                        }
+                    }
+                }),
+            ),
             self.tool_definition(
                 "get_performance_summary",
                 "Get an aggregate performance summary for the current page",
@@ -595,6 +667,60 @@ impl McpServer {
                 })?;
                 BrowserCommand::ExecuteJavaScript {
                     script: script.to_string(),
+                }
+            }
+            "start_recording" => {
+                let name = arguments["name"].as_str().ok_or_else(|| JsonRpcError {
+                    code: -32602,
+                    message: "Missing required parameter: name".to_string(),
+                    data: None,
+                })?;
+                let start_url = arguments["start_url"].as_str().ok_or_else(|| JsonRpcError {
+                    code: -32602,
+                    message: "Missing required parameter: start_url".to_string(),
+                    data: None,
+                })?;
+                BrowserCommand::StartRecording {
+                    name: name.to_string(),
+                    start_url: start_url.to_string(),
+                }
+            }
+            "stop_recording" => BrowserCommand::StopRecording,
+            "save_recording" => {
+                let path = arguments["path"].as_str().ok_or_else(|| JsonRpcError {
+                    code: -32602,
+                    message: "Missing required parameter: path".to_string(),
+                    data: None,
+                })?;
+                BrowserCommand::SaveRecording { path: path.to_string() }
+            }
+            "load_recording" => {
+                let path = arguments["path"].as_str().ok_or_else(|| JsonRpcError {
+                    code: -32602,
+                    message: "Missing required parameter: path".to_string(),
+                    data: None,
+                })?;
+                BrowserCommand::LoadRecording { path: path.to_string() }
+            }
+            "start_playback" => BrowserCommand::StartPlayback,
+            "stop_playback" => BrowserCommand::StopPlayback,
+            "get_playback_state" => BrowserCommand::GetPlaybackState,
+            "step_playback" => {
+                // Two directions behind one tool: an agent bisecting a failure
+                // thinks in terms of "step", not two separate verbs.
+                match arguments.get("direction").and_then(|v| v.as_str()).unwrap_or("forward") {
+                    "backward" => BrowserCommand::StepBackward,
+                    "forward" => BrowserCommand::StepForward,
+                    other => {
+                        return Err(JsonRpcError {
+                            code: -32602,
+                            message: format!(
+                                "Invalid direction {:?}: expected \"forward\" or \"backward\"",
+                                other
+                            ),
+                            data: None,
+                        })
+                    }
                 }
             }
             "start_console_monitoring" => BrowserCommand::StartConsoleMonitoring,
@@ -885,6 +1011,97 @@ mod tests {
     }
 
     #[test]
+    fn test_recording_tools_dispatch_expected_commands() {
+        let (mut server, mut rx) = setup_test_server();
+
+        for (tool, expected) in [
+            ("stop_recording", BrowserCommand::StopRecording),
+            ("start_playback", BrowserCommand::StartPlayback),
+            ("stop_playback", BrowserCommand::StopPlayback),
+            ("get_playback_state", BrowserCommand::GetPlaybackState),
+        ] {
+            let params = json!({ "name": tool, "arguments": {} });
+            assert!(server.handle_tool_call(Some(params)).is_ok(), "{} failed", tool);
+            let sent = rx.try_recv().expect("no command was broadcast");
+            assert_eq!(
+                std::mem::discriminant(&sent),
+                std::mem::discriminant(&expected),
+                "{} dispatched the wrong command",
+                tool
+            );
+        }
+    }
+
+    #[test]
+    fn test_start_recording_passes_arguments_through() {
+        let (mut server, mut rx) = setup_test_server();
+
+        let params = json!({
+            "name": "start_recording",
+            "arguments": { "name": "checkout-flow", "start_url": "https://example.com/cart" }
+        });
+        assert!(server.handle_tool_call(Some(params)).is_ok());
+
+        match rx.try_recv().expect("no command was broadcast") {
+            BrowserCommand::StartRecording { name, start_url } => {
+                assert_eq!(name, "checkout-flow");
+                assert_eq!(start_url, "https://example.com/cart");
+            }
+            other => panic!("expected StartRecording, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_start_recording_requires_both_arguments() {
+        let (mut server, _rx) = setup_test_server();
+
+        // start_url missing
+        let params = json!({
+            "name": "start_recording",
+            "arguments": { "name": "only-a-name" }
+        });
+        assert!(server.handle_tool_call(Some(params)).is_err());
+    }
+
+    #[test]
+    fn test_step_playback_direction() {
+        let (mut server, mut rx) = setup_test_server();
+
+        // Explicit backward
+        let params = json!({
+            "name": "step_playback",
+            "arguments": { "direction": "backward" }
+        });
+        assert!(server.handle_tool_call(Some(params)).is_ok());
+        assert_eq!(
+            std::mem::discriminant(&rx.try_recv().unwrap()),
+            std::mem::discriminant(&BrowserCommand::StepBackward)
+        );
+
+        // Omitted direction defaults to forward
+        let params = json!({ "name": "step_playback", "arguments": {} });
+        assert!(server.handle_tool_call(Some(params)).is_ok());
+        assert_eq!(
+            std::mem::discriminant(&rx.try_recv().unwrap()),
+            std::mem::discriminant(&BrowserCommand::StepForward)
+        );
+    }
+
+    #[test]
+    fn test_step_playback_rejects_unknown_direction() {
+        let (mut server, mut rx) = setup_test_server();
+
+        // A typo must be an error, not a silent step in the default direction --
+        // an agent bisecting a failure would be misled by the wrong way.
+        let params = json!({
+            "name": "step_playback",
+            "arguments": { "direction": "backwards" }
+        });
+        assert!(server.handle_tool_call(Some(params)).is_err());
+        assert!(rx.try_recv().is_err(), "no command should have been broadcast");
+    }
+
+    #[test]
     fn test_console_tools_dispatch_expected_commands() {
         let (mut server, mut rx) = setup_test_server();
 
@@ -984,6 +1201,14 @@ mod tests {
             "get_core_web_vitals",
             "get_memory_metrics",
             "get_performance_summary",
+            "start_recording",
+            "stop_recording",
+            "save_recording",
+            "load_recording",
+            "start_playback",
+            "stop_playback",
+            "get_playback_state",
+            "step_playback",
         ] {
             assert!(names.contains(&expected), "{} missing from tools/list", expected);
         }
