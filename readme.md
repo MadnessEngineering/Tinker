@@ -225,6 +225,12 @@ breakdown citing implementing files and test counts.
   testing (tab order, accessibility) isn't scriptable yet.
 - **Assertions are minimal.** Recordings can store expected state, but there's
   no authoring UX and no pass/fail surfacing.
+- **MCP tools don't return results.** Every tool triggers its command and
+  replies `"Command '<name>' sent successfully"`. Reads like
+  `get_console_logs` and `get_core_web_vitals` do not return logs or vitals —
+  results are published to the event bus instead. Use the REST API when you
+  need the answer back. Tracked as the top item in Track A of the
+  [roadmap](ROADMAP.md).
 
 ### Getting it running
 

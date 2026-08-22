@@ -186,17 +186,48 @@ tests, DOM find/click/type, JavaScript execution, and network monitoring.
 ### M3 — Close the agent feedback loop
 
 - [x] **Expose the observability suite over MCP.** Nine tools added — four for console capture,
-      five for performance — taking the advertised surface from 16 tools to 25. An agent can now
-      ask "did that click throw a console error?", which it previously could not. All nine were
+      five for performance — taking the advertised surface from 16 tools to 25. All nine were
       already reachable over REST; only the MCP binding was missing.
+      **Caveat, and it is a large one:** these tools can only *trigger* a query, not return its
+      answer. See the next item — until that is fixed, every `get_*` tool on the MCP surface is
+      half a feature.
 - [x] **Expose recording/replay over MCP.** Eight tools: start/stop recording, save/load to file,
       start/stop playback, playback state, and a single `step_playback` taking a direction rather
       than two separate verbs — an agent bisecting a failure thinks in terms of stepping. An unknown
       direction is an error rather than a silent default, since stepping the wrong way would mislead
       exactly the bisect it exists to serve.
+- [ ] **Make MCP tools return their results.** *Highest priority in this track; blocks the two
+      items below.* Every tool is currently fire-and-forget. `handle_tool_call` broadcasts a
+      `BrowserCommand` and returns the string `"Command '<name>' sent successfully"` — the code
+      carries the comment *"in a real implementation, we'd wait for the response"*. So
+      `get_console_logs` returns that sentence rather than any logs, and the same is true of
+      `get_core_web_vitals`, `get_page_info`, `find_element`, `execute_javascript`,
+      `take_screenshot`, and every other read.
+
+      The pieces exist but are not joined. The engine does publish results — `GetConsoleLogs`
+      emits a `ConsoleMessage` event per line, and there are `PerformanceMetricsCollected`,
+      `CoreWebVitalsUpdated`, and `MemoryMetricsUpdated` variants. `McpServer` even holds an
+      `event_rx: broadcast::Receiver<BrowserEvent>`. It is never read — the field is touched only
+      by the constructor.
+
+      The design problem is correlation. Events carry no request id, and some (`ConsoleMessage`)
+      are also emitted spontaneously by the page, so "collect events for N ms after sending" is
+      racy: it can capture unrelated traffic or miss a slow reply. Two candidate fixes, and this
+      needs a decision before code:
+      1. Add a correlation id to `BrowserCommand`/`BrowserEvent` and have the engine echo it.
+         Clean, but touches every command and event variant.
+      2. Have the MCP path call the engine's accessor methods directly rather than round-tripping
+         through the broadcast bus. Much smaller, but only works where MCP and the engine share a
+         process — which today they do.
+
+      Whichever is chosen, the wait needs a timeout. A blocking read with no deadline is the exact
+      failure that hung CI on all three platforms earlier in this milestone.
 - [ ] **Structured errors for agents.** Failures should return machine-readable causes, not prose.
+      Depends on the item above: there is no result path to put a structured error into yet.
 - [ ] **MCP resources and prompts.** `handle_resources_list` and `handle_prompts_list` return empty.
-      Resources could expose the live DOM, console buffer, and network log as readable context.
+      Resources would expose the live DOM, console buffer, and network log as readable context, so
+      an agent could pull state without a tool call per question. Blocked on the result path above:
+      `resources/read` has to return real content, and today nothing can.
 - [ ] **Page-level keyboard input** — see the note under "Not started". Wanted by both tracks, but
       it needs a design decision first (native injection vs. driving the webview's own input path),
       not just a binding. Do not scope this as "expose `keyboard.rs`"; that module solves a

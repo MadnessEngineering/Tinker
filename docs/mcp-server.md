@@ -49,6 +49,17 @@ The MCP server implements the Model Context Protocol specification, using JSON-R
 }
 ```
 
+## Known limitation: tools do not return results
+
+Every tool currently broadcasts its command to the browser and responds with
+`"Command '<name>' sent successfully"`. It does **not** return the command's
+result. Reads such as `get_console_logs`, `get_core_web_vitals`, `get_page_info`,
+and `execute_javascript` trigger the work, but the output is published to the
+event bus rather than returned to the caller.
+
+Use the REST API when you need the value back. This is the top priority in
+Track A of the [roadmap](../ROADMAP.md).
+
 ## Available Methods
 
 ### initialize
