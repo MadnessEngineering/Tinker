@@ -28,26 +28,32 @@ Born in a workshop of web innovation, Tinker aims to reimagine browser testing t
    - MQTT Control Panel Integration ✅
 
 2. Testing Workbench
-   - Remote Control Interface ✅
-   - Test Assembly Line ✅
+   - Remote Control Interface ✅ (REST, WebSocket, MQTT, MCP)
+   - Test Assembly Line 🚧 (recording works; test generation doesn't)
    - Quality Assurance Tools ✅
    - Visual Inspection System ✅
 
 3. Event Workshop
    - MQTT Signal Tower ✅
    - Event Blueprint System ✅
-   - Replay Engineering ✅
-   - Timing Calibration Tools
+   - Replay Engineering ✅ (seek, step, speed, loop)
+   - Timing Calibration Tools ✅
 
 4. **Advanced Testing Laboratory** 🆕
    - DOM Element Inspector ✅
    - JavaScript Injection Engine ✅
    - Network Traffic Monitor ✅
    - Visual Testing Suite ✅
-   - Performance Analyzer 🚧
-   - Debug Tools & Breakpoints 🚧
+   - Console Monitor ✅
+   - Performance Analyzer ✅ (Core Web Vitals, memory, JS profiling)
+   - Step Debugging ✅ (via replay); Breakpoints ❌
 
 ## Quick Start
+
+> **First build?** Install the native dependencies first — GTK and WebKitGTK
+> headers on Linux. They aren't in `Cargo.toml` and a cold clone fails without
+> them. See [Getting Started](docs/getting-started.md).
+
 - 🔧 Clone the repository
 - 🛠️ Run `cargo build`
 - 🚀 Start with `cargo run -- --url https://example.com`
@@ -87,8 +93,43 @@ Tinker provides a comprehensive REST API for automation and testing:
 - `POST /api/network/filter` - Add network filters
 - `POST /api/network/clear-filters` - Clear all filters
 
+### Performance
+- `POST /api/performance/start` - Start performance monitoring
+- `POST /api/performance/stop` - Stop performance monitoring
+- `GET /api/performance/metrics` - Collect current metrics
+- `GET /api/performance/core-web-vitals` - LCP, FID, CLS, INP, TTFB, FCP
+- `GET /api/performance/memory` - Heap, DOM nodes, listeners
+- `GET /api/performance/summary` - Aggregate summary
+- `POST /api/performance/profiling/start` - Start JS profiling
+- `POST /api/performance/profiling/stop` - Stop JS profiling
+- `POST /api/performance/marker` - Add a custom marker
+- `POST /api/performance/measure` - Measure between two markers
+
+### Console
+- `POST /api/console/start` - Start console monitoring
+- `POST /api/console/stop` - Stop console monitoring
+- `GET /api/console/logs` - Retrieve captured logs
+- `POST /api/console/clear` - Clear the log buffer
+- `POST /api/console/filter` - Filter by level
+
+### Recording & Playback
+- `POST /api/recording/start` - Start recording a session
+- `POST /api/recording/stop` - Stop recording
+- `POST /api/recording/pause` / `resume` - Pause and resume
+- `POST /api/recording/save` / `load` - Persist and restore recordings
+- `POST /api/recording/assertion` - Attach an expected-state assertion
+- `POST /api/recording/snapshots` - Enable periodic snapshots
+- `POST /api/playback/start` / `stop` / `pause` / `resume` - Playback control
+- `POST /api/playback/seek` - Seek to a timestamp
+- `POST /api/playback/step/forward` / `backward` - Step through events
+- `POST /api/playback/speed` - Set playback speed
+- `POST /api/playback/loop` - Toggle looping
+- `GET /api/playback/state` - Current playback state
+
 ### Real-time Control
 - `WS /ws` - WebSocket for real-time events and control
+- `GET /health` - Health check
+- `GET /api/info` - Browser and capability info
 
 ## MCP Server (AI Agent Control)
 
@@ -136,6 +177,7 @@ Then ask Claude to control the browser:
 See [MCP Server Documentation](docs/mcp-server.md) for complete details.
 
 ## Documentation
+- [Getting Started](docs/getting-started.md) - Install, build, run
 - [Contributing](CONTRIBUTING.md) - Join the guild! Includes detailed architecture guide
 - [Changelog](CHANGELOG.md) - Project history and updates
 - [Roadmap](ROADMAP.md) - Future development plans
@@ -143,88 +185,59 @@ See [MCP Server Documentation](docs/mcp-server.md) for complete details.
 
 ## Project Status
 
-🎉 **WORLD-CLASS BROWSER TESTING PLATFORM** - Major phases complete!
+Tinker works and is useful, with the caveats below. Status here is kept
+honest against the code — see the [roadmap](ROADMAP.md) for a per-module
+breakdown citing implementing files and test counts.
 
-### ✅ Phase 1: Foundation (COMPLETE)
-- **Core Engine**: Window & WebView creation with proper bounds
-- **Tab Management**: Complete system with thread-safe state handling  
-- **MQTT Events**: Full implementation with reconnection logic
-- **CLI Interface**: Comprehensive argument parsing and configuration
-- **Build System**: Compiles successfully and starts properly
+**Verified**: August 22, 2026 · ~70 browser commands · `cargo test` → 164 passed, 3 ignored
 
-### ✅ Phase 2: Visual Testing (COMPLETE)
-- **Screenshot Capture**: Multi-format support (PNG, JPEG, WebP)
-- **Visual Comparison**: Pixel-level difference analysis
-- **Baseline Testing**: Create and compare against visual baselines
-- **Image Processing**: Full pipeline for visual regression testing
+### What works
 
-### ✅ Phase 3: Advanced DOM & Network (COMPLETE)
-- **DOM Element Inspector**: CSS/XPath/text selector support
-- **Element Interaction**: Click, type, hover, scroll, drag operations
-- **JavaScript Injection**: Full script execution capabilities
-- **Wait Conditions**: Smart waiting for dynamic content
-- **Network Monitoring**: Real-time request/response tracking
-- **HAR Export**: Industry-standard network analysis format
-- **Performance Statistics**: Request timing and analysis
+- **Core engine** — window and WebView creation, tabs, navigation with
+  per-tab history, session persistence across launches
+- **Control surfaces** — MQTT event tower, REST API, WebSocket at `/ws`,
+  and an MCP server for AI agents
+- **DOM automation** — CSS/XPath/text selectors, click/type/hover/scroll,
+  wait conditions, element highlighting, JavaScript execution
+- **Visual testing** — screenshot capture, baselines, pixel-level diffing
+- **Network monitoring** — request/response capture, filters, HAR export
+- **Console monitoring** — capture and filtering by level
+- **Performance** — Core Web Vitals, navigation and resource timing,
+  memory metrics, JavaScript profiling, custom marks and measures
+- **Recording and replay** — record sessions, replay with seek, step
+  forward/back, speed control, and looping
 
-### 🚧 Phase 4: Performance & Debugging (IN PROGRESS)
-- **Performance Metrics**: Page load timing, resource analysis
-- **Memory Profiling**: JavaScript heap and DOM analysis
-- **Step-through Debugging**: Breakpoints and code inspection
-- **CPU Performance**: JavaScript execution profiling
+### Known gaps
 
-### 🔧 Quick Start Status
-- `cargo build` ✅ Works perfectly
-- `cargo run -- --url https://example.com` ✅ **BROWSER FULLY FUNCTIONAL!**
-- `cargo run -- --api` ✅ **REST API SERVER READY!**
-- Window creation ✅ Works with proper chrome
-- Tab management ✅ Works with visual tab bar
-- MQTT events ✅ Works with full event publishing
-- WebView integration ✅ Both content view and tab bar working
-- DOM inspection ✅ **Complete automation capabilities**
-- Network monitoring ✅ **Real-time traffic analysis**
-- Visual testing ✅ **Screenshot & comparison engine**
+- **No CI.** The suite passes but nothing runs it automatically, on any
+  platform. This is the next thing being fixed.
+- **Cross-platform is unproven.** Development has been macOS-centric. Windows
+  and Linux builds are expected to work but aren't regularly exercised.
+- **Recordings can't become tests.** You can record and replay a session, but
+  not generate a committable test from it.
+- **No reporting.** Results surface as logs and API responses; there's no
+  report or export format.
+- **Keyboard input isn't exposed.** `browser/keyboard.rs` handles shortcuts
+  internally but isn't reachable over the API or MCP, so keyboard-driven
+  testing (tab order, accessibility) isn't scriptable yet.
+- **Assertions are minimal.** Recordings can store expected state, but there's
+  no authoring UX and no pass/fail surfacing.
 
-## Testing Scripts
+### Getting it running
 
-Use the included Python test scripts to verify functionality:
+`cargo build` needs system libraries that aren't in `Cargo.toml` — GTK and
+WebKitGTK development headers on Linux. A cold clone fails without them, in a
+dependency, with an error that doesn't name the fix. See
+[Getting Started](docs/getting-started.md).
+
+## Testing
 
 ```bash
-# Test DOM inspection and JavaScript injection
-python test_dom_simple.py
-
-# Test network monitoring features  
-python test_network_monitoring.py
-
-# Test visual testing capabilities
-python test_visual.py
+cargo test
 ```
 
-## What's Next
-
-### Immediate Priorities (Phase 4)
-1. **Performance Analyzer**: JavaScript execution profiling, memory usage tracking
-2. **Debug Tools**: Step-through debugging, breakpoint management
-3. **Advanced Metrics**: Core Web Vitals, custom performance markers
-
-### Future Enhancements
-- Browser DevTools integration
-- Multi-browser support (Firefox, Safari engines)
-- Cloud testing infrastructure
-- Plugin system for custom testing tools
-
-## Capabilities Summary
-
-🎯 **Element Automation**: Find, interact, and wait for DOM elements
-🌐 **Network Analysis**: Monitor, filter, and export network traffic  
-📸 **Visual Testing**: Screenshot capture and visual regression testing
-⚡ **JavaScript Control**: Execute custom scripts and monitor execution
-🔄 **Event Streaming**: Real-time MQTT event publishing
-🌍 **Web Automation**: Complete browser control via REST API
-📊 **Performance Monitoring**: Request timing and resource analysis
-🔧 **Debugging Tools**: Element highlighting and inspection
-
-**Tinker is now a production-ready browser testing platform!**
+The Rust suites need no running browser. For manual smoke tests against a live
+instance, see [`tests/integration/README.md`](tests/integration/README.md).
 
 ## License
 
