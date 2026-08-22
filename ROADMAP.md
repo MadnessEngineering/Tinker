@@ -16,7 +16,11 @@ Both sit on one core engine. Work that serves both lives in **Shared Foundation*
 ## Where Tinker actually stands
 
 The engine dispatches ~70 `BrowserCommand` variants (`src/event/mod.rs`), all handled in
-`src/browser/mod.rs`. 147 tests across 27 files. The following is what that adds up to.
+`src/browser/mod.rs`. `cargo test` reports **164 passed, 0 failed, 3 ignored** (the ignored three
+spawn the built binary). Verified on Linux, August 22, 2026.
+
+Note the executed count exceeds the number of `#[test]` functions in the tree: `main.rs` re-declares
+modules `lib.rs` already exports, so their tests run in both binaries. See M2.
 
 ### Built and wired
 
@@ -49,58 +53,69 @@ The engine dispatches ~70 `BrowserCommand` variants (`src/event/mod.rs`), all ha
 - CI of any kind. No `.github/workflows`.
 - Test generation from recordings.
 - Report/export layer.
+- Keyboard input over the API or MCP (`browser/keyboard.rs` is internal-only).
+- Browser profiles — user agent, viewport, timezone, locale.
 - Cross-engine result comparison (see Track B, M4).
 
 ---
 
-## M1 — Make the repo tell the truth *(current milestone)*
+## M1 — Make the repo tell the truth *(done — August 22, 2026)*
 
-The code outran its documentation by about a year. Nothing new gets built until a reader can trust
-what's written down. This is small, and it makes every later milestone safe to start.
+The code had outrun its documentation by about a year. Completed:
 
-- [ ] **Rewrite `readme.md` status section.** It currently claims Phase 4 performance/debugging is
-      "in progress" when it's substantially built, and bills the project "production-ready" without
-      qualification. State what works, on which platforms, with what gaps.
-- [ ] **Fix broken references in `readme.md`.** Links `docs/getting-started.md` (doesn't exist) and
-      `test_visual.py` (the file is `test_visual_api.py`).
-- [ ] **Retire `CURRENT_STATUS.md`.** Dated July 2025 and wrong on nearly every point: says template
-      files are missing (they exist), visual testing is absent (it's built), WebSocket isn't started
-      (it's live at `/ws`). Delete it; this roadmap is the single status document now.
-- [ ] **Fold the summary docs in.** `MCP_IMPLEMENTATION_SUMMARY.md`,
-      `PERFORMANCE_IMPLEMENTATION_SUMMARY.md`, and `fix_plan.md` are point-in-time notes. Move
-      anything still true into `docs/`, delete the rest.
-- [ ] **Remove session cruft.** `2025-07-23-this-session-is-being-continued-from-a-previous-co.txt`
-      and `error_log.txt` don't belong in version control.
-- [ ] **Consolidate the root Python scripts.** Seven ad-hoc `test_*.py` files at the repo root
-      exercise the live API. Move them to `tests/integration/` with a README explaining that they
-      need a running browser, or retire the ones superseded by Rust tests.
-- [ ] **Replace `src/browser/tests.rs`.** Ten lines, one test, zero assertions, calls `Browser::new()`
-      which may no longer exist. Either write real tests or delete the file.
-- [ ] **Write `docs/getting-started.md`,** including the native dependencies below — the single
-      most likely thing to stop a new contributor.
+- [x] **Rewrote the `readme.md` status section.** It claimed performance/debugging was "in progress"
+      when it was substantially built, and billed the project "production-ready" without
+      qualification. Now states what works, what's missing, and what's unproven.
+- [x] **Fixed broken references.** `docs/getting-started.md` didn't exist (now written); the
+      `test_visual.py` link pointed at a file named `test_visual_api.py`.
+- [x] **Documented the undocumented API surface.** The readme listed ~20 endpoints; the router has
+      ~55. Performance, console, recording, and playback were entirely absent.
+- [x] **Retired `CURRENT_STATUS.md`.** Dated July 2025 and wrong on nearly every point: claimed
+      template files were missing (they exist), visual testing absent (built), WebSocket unstarted
+      (live at `/ws`). This roadmap is the single status document now.
+- [x] **Deleted the point-in-time summaries.** `MCP_IMPLEMENTATION_SUMMARY.md` and
+      `PERFORMANCE_IMPLEMENTATION_SUMMARY.md` were completion reports superseded by the fuller
+      guides in `docs/`. `fix_plan.md` described blockers fixed in March 2026.
+- [x] **Removed session cruft** from version control and extended `.gitignore` to keep it out.
+- [x] **Consolidated the root Python scripts** into `tests/integration/` with a README covering
+      prerequisites and what each one exercises.
+- [x] **Deleted two dead modules.** `src/browser/tests.rs` and `src/cli/` were declared in neither
+      `lib.rs` nor `main.rs` — they had never compiled. `src/cli/mod.rs` was the more dangerous of
+      the two: a stub `Args::parse()` returning defaults and ignoring all input, shadowed by the
+      real clap parser in `main.rs`, and an easy trap for anyone who found it first.
+- [x] **Wrote `docs/getting-started.md`** with the native dependencies, the exact failure they
+      cause, and package names for Debian/Fedora/Arch.
 
-### The build trap worth documenting
-
-A cold clone doesn't build without system libraries that aren't obvious from `Cargo.toml`. On Linux
-you need the GTK and WebKitGTK development headers; without them `gdk-sys` fails at
-`pkg-config --libs --cflags gdk-3.0` with a message that doesn't name the fix clearly. This is
-exactly the class of problem CI would catch, which is why M2 follows immediately.
+`LESSONS_LEARNED.md` was kept — its testing and thread-safety notes are still true and aren't
+recorded elsewhere.
 
 ---
 
-## M2 — Shared Foundation: prove it works
+## M2 — Shared Foundation: prove it works *(current milestone)*
 
 Cross-engine testing (M4) is only meaningful if Tinker reliably runs on more than one platform.
 That makes this milestone load-bearing rather than housekeeping.
 
-- [ ] **GitHub Actions: build + test on macOS, Linux, Windows.** 147 tests exist and nothing runs
-      them. Start here.
+- [ ] **GitHub Actions: build + test on macOS, Linux, Windows.** The suite passes and nothing runs
+      it. Start here.
 - [ ] **Install native deps in CI** so the workflow doubles as executable setup documentation.
+      A cold clone needs GTK and WebKitGTK headers that `Cargo.toml` can't declare; without them
+      `gdk-sys` fails at `pkg-config --libs --cflags gdk-3.0` with a message that never names the
+      fix. Now written down in `docs/getting-started.md`, but documentation rots — CI wouldn't.
 - [ ] **Headless-capable test lane.** Windowed tests need a display; sort out `xvfb` on Linux or
       gate the windowed suite so the rest can run everywhere.
 - [ ] **Resolve `src/platform/`.** With Windows a real target, decide: finish the abstraction for
       what `tao`/`wry` genuinely don't cover (native chrome, theming, window handles), or delete it.
-      Don't leave commented-out traits sitting there for another year.
+      Don't leave commented-out traits sitting there for another year. M1 removed two other dead
+      modules for the same reason; this is the last one, and the only one with a plausible future.
+- [ ] **Deduplicate the module tree.** `main.rs` declares `api`, `browser`, `event`, and
+      `templates`, all of which `lib.rs` already exports — so the crate is compiled twice and
+      shared tests execute twice (48 in the lib binary, 63 in the bin, largely overlapping).
+      `main.rs` should depend on the library rather than re-declaring its modules. Note `mcp`
+      lives only in `main.rs` and `platform` only in `lib.rs`, so this needs care, not a blind
+      delete.
+- [ ] **Clear the warning backlog.** A clean build emits 91 warnings — unused imports, unused
+      variables, dead constants in `templates/mod.rs`. Enough noise to hide a real one.
 - [ ] **Tag v0.1.0** once the matrix is green. First point a user can be pointed at.
 
 ---
@@ -121,6 +136,9 @@ tests, DOM find/click/type, JavaScript execution, and network monitoring.
 - [ ] **Structured errors for agents.** Failures should return machine-readable causes, not prose.
 - [ ] **MCP resources and prompts.** `handle_resources_list` and `handle_prompts_list` return empty.
       Resources could expose the live DOM, console buffer, and network log as readable context.
+- [ ] **Expose keyboard input.** `browser/keyboard.rs` handles shortcuts internally but is reachable
+      from neither the API nor MCP. Selector-based `click`/`type` can't test tab order, focus
+      traversal, or keyboard accessibility — those need real key events. Wanted by both tracks.
 - [ ] **Document the agent loop** in `docs/mcp-server.md`: act → observe → assert.
 
 ---
@@ -156,7 +174,20 @@ This depends on M2 and can't start before it.
       pass/fail. Nothing today surfaces a result beyond logs.
 - [ ] **Export tooling** for CI consumption — JUnit XML or similar.
 
-### M6 — Integrations
+### M6 — Browser profiles
+
+Salvaged from the retired `fix_plan.md`, which sketched this and never built it. A profile bundles
+the variables a test needs to hold steady: user agent, viewport, timezone, language, cookies.
+
+- [ ] **Profile struct and switching**, so one recorded session can run under several profiles.
+- [ ] **Locale and timezone control** — currently untestable, and a common source of real bugs.
+- [ ] **Viewport presets** for responsive testing, composing with the visual baselines in M4.
+
+Note: `fix_plan.md` framed part of this as "anti-detection" — spoofing fingerprints to evade bot
+detection. Deliberately not carried forward. Configurable profiles for testing your own site are
+the useful half; evasion tooling is a different product with different obligations.
+
+### M7 — Integrations
 
 - [ ] **CI recipes** for running Tinker suites in GitHub Actions.
 - [ ] **Plugin interface** for custom testing tools.
