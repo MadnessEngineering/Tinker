@@ -10,6 +10,7 @@ use tracing::{debug, error, info};
 use anyhow::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ScreenshotOptions {
     /// File format for the screenshot
     pub format: ScreenshotFormat,
@@ -25,8 +26,11 @@ pub struct ScreenshotOptions {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScreenshotFormat {
+    #[serde(alias = "png")]
     PNG,
+    #[serde(alias = "jpeg", alias = "jpg")]
     JPEG,
+    #[serde(alias = "webp")]
     WebP,
 }
 

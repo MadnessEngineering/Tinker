@@ -930,57 +930,88 @@ impl BrowserEngine {
         }
     }
 
-    /// Take a screenshot of the current active tab
-    pub fn take_screenshot(&self, options: Option<ScreenshotOptions>) -> Result<ScreenshotResult, String> {
+    /// Capture the content view (the page, not the chrome) and hand the result
+    /// to `done`. Capture is asynchronous: on Windows it goes through the
+    /// DevTools `Page.captureScreenshot` call on the underlying WebView2, whose
+    /// completion arrives later on the UI thread. The PNG it returns is decoded
+    /// and run through `VisualTester::capture_from_data`, so `options` cropping,
+    /// scaling and output format all apply.
+    pub fn capture_screenshot(
+        &self,
+        options: Option<ScreenshotOptions>,
+        done: impl FnOnce(Result<ScreenshotResult, String>) + 'static,
+    ) {
         let options = options.unwrap_or_default();
-        
-        if let Some(ref content_view) = self.content_view {
-            if let Ok(view) = content_view.lock() {
-                // For now, we'll create a mock screenshot since WebView screenshot requires platform-specific code
-                // In a real implementation, this would capture the actual WebView content
-                info!("Taking screenshot with options: {:?}", options);
-                
-                // Create a simple test pattern for demonstration
-                let width = 800u32;
-                let height = 600u32;
-                let mut image_data = Vec::with_capacity((width * height * 4) as usize);
-                
-                // Generate a gradient pattern for testing
-                for y in 0..height {
-                    for x in 0..width {
-                        let r = ((x as f32 / width as f32) * 255.0) as u8;
-                        let g = ((y as f32 / height as f32) * 255.0) as u8;
-                        let b = 128u8;
-                        let a = 255u8;
-                        image_data.extend_from_slice(&[r, g, b, a]);
+        info!("Taking screenshot with options: {:?}", options);
+
+        let Some(ref content_view) = self.content_view else {
+            return done(Err("No content view available".to_string()));
+        };
+        let visual_tester = self.visual_tester.clone();
+        let finish = move |png: Result<Vec<u8>, String>| {
+            let result = png.and_then(|png| {
+                let img = image::load_from_memory(&png)
+                    .map_err(|e| format!("Failed to decode screenshot: {}", e))?
+                    .to_rgba8();
+                let (width, height) = img.dimensions();
+                let tester = visual_tester.lock()
+                    .map_err(|_| "Failed to lock visual tester".to_string())?;
+                tester.capture_from_data(img.as_raw(), width, height, options)
+                    .map_err(|e| format!("Failed to capture screenshot: {}", e))
+            });
+            done(result);
+        };
+
+        #[cfg(windows)]
+        {
+            use base64::{engine::general_purpose, Engine as _};
+            use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
+            use windows::core::HSTRING;
+            use wry::WebViewExtWindows;
+
+            let Ok(view) = content_view.lock() else {
+                return finish(Err("Failed to lock content view".to_string()));
+            };
+            // Shared so a failed start can still report through `finish`.
+            let finish = std::rc::Rc::new(std::cell::RefCell::new(Some(finish)));
+            let finish_cb = finish.clone();
+            let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
+                move |hr, json: String| {
+                    let png = hr.map_err(|e| format!("Page.captureScreenshot failed: {}", e))
+                        .and_then(|_| {
+                            let value: serde_json::Value = serde_json::from_str(&json)
+                                .map_err(|e| format!("Bad captureScreenshot reply: {}", e))?;
+                            let data = value["data"].as_str()
+                                .ok_or("captureScreenshot reply has no data")?;
+                            general_purpose::STANDARD.decode(data)
+                                .map_err(|e| format!("Bad screenshot base64: {}", e))
+                        });
+                    if let Some(finish) = finish_cb.borrow_mut().take() {
+                        finish(png);
                     }
+                    Ok(())
+                },
+            ));
+            let started = unsafe {
+                view.controller().CoreWebView2().and_then(|webview| {
+                    webview.CallDevToolsProtocolMethod(
+                        &HSTRING::from("Page.captureScreenshot"),
+                        &HSTRING::from(r#"{"format":"png"}"#),
+                        &handler,
+                    )
+                })
+            };
+            if let Err(e) = started {
+                if let Some(finish) = finish.borrow_mut().take() {
+                    finish(Err(format!("Failed to start screenshot capture: {}", e)));
                 }
-                
-                if let Ok(visual_tester) = self.visual_tester.lock() {
-                    match visual_tester.capture_from_data(&image_data, width, height, options) {
-                        Ok(screenshot) => {
-                            self.publish_event(BrowserEvent::CommandExecuted {
-                                command: "screenshot".to_string(),
-                                success: true,
-                            }).ok();
-                            Ok(screenshot)
-                        },
-                        Err(e) => {
-                            let error_msg = format!("Failed to capture screenshot: {}", e);
-                            self.publish_event(BrowserEvent::Error {
-                                message: error_msg.clone(),
-                            }).ok();
-                            Err(error_msg)
-                        }
-                    }
-                } else {
-                    Err("Failed to lock visual tester".to_string())
-                }
-            } else {
-                Err("Failed to lock content view".to_string())
             }
-        } else {
-            Err("No content view available".to_string())
+        }
+
+        #[cfg(not(windows))]
+        {
+            let _ = content_view;
+            finish(Err("Screenshots are only implemented for WebView2 (Windows)".to_string()));
         }
     }
 
@@ -1005,30 +1036,44 @@ impl BrowserEngine {
     }
 
     /// Create a baseline screenshot for visual regression testing
-    pub fn create_baseline(&self, test_name: &str, options: Option<ScreenshotOptions>) -> Result<String, String> {
-        let screenshot = self.take_screenshot(options)?;
-        
-        if let Ok(visual_tester) = self.visual_tester.lock() {
-            visual_tester.create_baseline(&screenshot, test_name)
-                .map_err(|e| format!("Failed to create baseline: {}", e))
-        } else {
-            Err("Failed to lock visual tester".to_string())
-        }
+    pub fn create_baseline(
+        &self,
+        test_name: &str,
+        options: Option<ScreenshotOptions>,
+        done: impl FnOnce(Result<String, String>) + 'static,
+    ) {
+        let visual_tester = self.visual_tester.clone();
+        let test_name = test_name.to_string();
+        self.capture_screenshot(options, move |shot| {
+            done(shot.and_then(|screenshot| {
+                let tester = visual_tester.lock()
+                    .map_err(|_| "Failed to lock visual tester".to_string())?;
+                tester.create_baseline(&screenshot, &test_name)
+                    .map_err(|e| format!("Failed to create baseline: {}", e))
+            }));
+        });
     }
 
     /// Run a visual regression test against a baseline
-    pub fn run_visual_test(&self, test_name: &str, tolerance: f64, options: Option<ScreenshotOptions>) -> Result<visual::VisualComparisonResult, String> {
-        let current_screenshot = self.take_screenshot(options)?;
-        
-        if let Ok(visual_tester) = self.visual_tester.lock() {
-            let baseline = visual_tester.load_baseline(test_name)
-                .map_err(|e| format!("Failed to load baseline '{}': {}", test_name, e))?;
-            
-            visual_tester.compare_screenshots(&baseline, &current_screenshot, tolerance)
-                .map_err(|e| format!("Failed to compare with baseline: {}", e))
-        } else {
-            Err("Failed to lock visual tester".to_string())
-        }
+    pub fn run_visual_test(
+        &self,
+        test_name: &str,
+        tolerance: f64,
+        options: Option<ScreenshotOptions>,
+        done: impl FnOnce(Result<visual::VisualComparisonResult, String>) + 'static,
+    ) {
+        let visual_tester = self.visual_tester.clone();
+        let test_name = test_name.to_string();
+        self.capture_screenshot(options, move |shot| {
+            done(shot.and_then(|current_screenshot| {
+                let tester = visual_tester.lock()
+                    .map_err(|_| "Failed to lock visual tester".to_string())?;
+                let baseline = tester.load_baseline(&test_name)
+                    .map_err(|e| format!("Failed to load baseline '{}': {}", test_name, e))?;
+                tester.compare_screenshots(&baseline, &current_screenshot, tolerance)
+                    .map_err(|e| format!("Failed to compare with baseline: {}", e))
+            }));
+        });
     }
 
     /// Execute JavaScript in the active WebView and return result
@@ -1554,16 +1599,29 @@ impl BrowserEngine {
                     error!("Replay event execution failed: {}", e);
                 }
             }
-            BrowserCommand::TakeScreenshot { options } => {
-                let screenshot_options = if let Some(opts) = options {
-                    serde_json::from_value(opts).unwrap_or_default()
-                } else {
-                    ScreenshotOptions::default()
+            BrowserCommand::TakeScreenshot { id, options } => {
+                let screenshot_options = match options {
+                    Some(opts) => match serde_json::from_value(opts) {
+                        Ok(o) => o,
+                        Err(e) => {
+                            self.resolve_js(id, Err(format!("Invalid screenshot options: {}", e)));
+                            return Ok(());
+                        }
+                    },
+                    None => ScreenshotOptions::default(),
                 };
-                
-                if let Ok(result) = self.take_screenshot(Some(screenshot_options)) {
-                    info!("Screenshot taken: {}x{}", result.width, result.height);
-                }
+                let pending = self.pending_js.clone();
+                self.capture_screenshot(Some(screenshot_options), move |result| {
+                    let reply = result.and_then(|shot| {
+                        info!("Screenshot taken: {}x{}", shot.width, shot.height);
+                        serde_json::to_string(&shot).map_err(|e| e.to_string())
+                    });
+                    if let Ok(mut pending) = pending.lock() {
+                        if let Some(tx) = pending.remove(&id) {
+                            let _ = tx.send(reply);
+                        }
+                    }
+                });
             }
             BrowserCommand::CreateBaseline { test_name, options } => {
                 let screenshot_options = if let Some(opts) = options {
@@ -1571,10 +1629,11 @@ impl BrowserEngine {
                 } else {
                     ScreenshotOptions::default()
                 };
-                
-                if let Ok(path) = self.create_baseline(&test_name, Some(screenshot_options)) {
-                    info!("Baseline created: {}", path);
-                }
+
+                self.create_baseline(&test_name, Some(screenshot_options), |result| match result {
+                    Ok(path) => info!("Baseline created: {}", path),
+                    Err(e) => error!("Baseline failed: {}", e),
+                });
             }
             BrowserCommand::RunVisualTest { test_name, tolerance, options } => {
                 let screenshot_options = if let Some(opts) = options {
@@ -1582,11 +1641,13 @@ impl BrowserEngine {
                 } else {
                     ScreenshotOptions::default()
                 };
-                
-                if let Ok(result) = self.run_visual_test(&test_name, tolerance, Some(screenshot_options)) {
-                    info!("Visual test '{}' completed: {:.2}% difference", 
-                          test_name, result.difference_percentage * 100.0);
-                }
+
+                let name = test_name.clone();
+                self.run_visual_test(&test_name, tolerance, Some(screenshot_options), move |result| match result {
+                    Ok(result) => info!("Visual test '{}' completed: {:.2}% difference",
+                                        name, result.difference_percentage * 100.0),
+                    Err(e) => error!("Visual test '{}' failed: {}", name, e),
+                });
             }
             BrowserCommand::FindElement { id, selector } => {
                 match Self::parse_element_selector(selector) {

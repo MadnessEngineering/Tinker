@@ -512,9 +512,29 @@ impl McpServer {
                 })? as usize;
                 BrowserCommand::SwitchTab { id }
             }
-            "take_screenshot" => BrowserCommand::TakeScreenshot {
-                options: Some(arguments.clone()),
-            },
+            "take_screenshot" => {
+                let options = Some(arguments.clone());
+                let shot = self.await_js(|id| BrowserCommand::TakeScreenshot { id, options })
+                    .and_then(|json| serde_json::from_str::<Value>(&json).map_err(|e| e.to_string()));
+                return match shot {
+                    // Return an MCP image block so the agent can see the page.
+                    Ok(shot) => {
+                        let mime = match shot["format"].as_str() {
+                            Some("JPEG") => "image/jpeg",
+                            Some("WebP") => "image/webp",
+                            _ => "image/png",
+                        };
+                        Ok(json!({
+                            "content": [{
+                                "type": "image",
+                                "data": shot["data"],
+                                "mimeType": mime,
+                            }]
+                        }))
+                    }
+                    Err(e) => self.js_tool_response(Err(e)),
+                };
+            }
             "find_element" => {
                 let selector_type = arguments["selector_type"]
                     .as_str()
@@ -880,6 +900,7 @@ mod tests {
     #[test]
     fn test_screenshot_tool() {
         let (mut server, _rx) = setup_test_server();
+        spawn_resolver(&server, r#"{"data":"iVBORw0KGgo=","width":1,"height":1,"format":"PNG","size":8,"timestamp":"2026-01-01T00:00:00Z"}"#);
         let params = json!({
             "name": "take_screenshot",
             "arguments": {
@@ -887,8 +908,10 @@ mod tests {
             }
         });
 
-        let result = server.handle_tool_call(Some(params));
-        assert!(result.is_ok());
+        let result = server.handle_tool_call(Some(params)).unwrap();
+        assert_eq!(result["content"][0]["type"], "image");
+        assert_eq!(result["content"][0]["mimeType"], "image/png");
+        assert_eq!(result["content"][0]["data"], "iVBORw0KGgo=");
     }
 
     #[test]

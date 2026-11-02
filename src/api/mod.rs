@@ -490,12 +490,8 @@ async fn take_screenshot(
     Json(request): Json<ScreenshotRequest>,
 ) -> Json<ApiResponse<String>> {
     debug!("API: Take screenshot");
-    
-    let command = BrowserCommand::TakeScreenshot { options: request.options };
-    match state.command_tx.send(command) {
-        Ok(_) => Json(ApiResponse::success("Screenshot command sent".to_string())),
-        Err(e) => Json(ApiResponse::error(format!("Failed to send screenshot command: {}", e))),
-    }
+    // `data` is a JSON-encoded ScreenshotResult (base64 image + dimensions).
+    await_js_result(&state, |id| BrowserCommand::TakeScreenshot { id, options: request.options }).await
 }
 
 async fn create_baseline(

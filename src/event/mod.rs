@@ -19,7 +19,7 @@ pub enum BrowserCommand {
     SwitchTab { id: usize },
     RecordEvent { event: BrowserEvent },
     PlayEvent { event: BrowserEvent },
-    TakeScreenshot { options: Option<serde_json::Value> },
+    TakeScreenshot { id: u64, options: Option<serde_json::Value> },
     CreateBaseline { test_name: String, options: Option<serde_json::Value> },
     RunVisualTest { test_name: String, tolerance: f64, options: Option<serde_json::Value> },
     FindElement { id: u64, selector: serde_json::Value },

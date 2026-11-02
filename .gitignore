@@ -38,3 +38,6 @@ __pycache__/
 .DS_Store
 Thumbs.db 
 /.claude/worktrees
+
+# Screenshots and visual-test baselines written at runtime
+screenshots/
