@@ -3,6 +3,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 use tao::{
@@ -12,7 +13,7 @@ use tao::{
     dpi::LogicalSize,
 };
 use wry::{WebView, WebViewBuilder};
-use tracing::{debug, info, error};
+use tracing::{debug, info, error, warn};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebViewError {
@@ -59,7 +60,7 @@ pub mod session;
 use self::{
     tabs::TabManager,
     event_viewer::EventViewer,
-    tab_ui::{TabBar, TabCommand},
+    tab_ui::{TabBar, TabCommand, CHROME_HEIGHT},
     replay::{EventRecorder, EventPlayer, PlaybackState},
     visual::{VisualTester, ScreenshotOptions, ScreenshotResult},
     inspector::{DOMInspector, ElementSelector, InteractionType, ElementInfo, WaitCondition},
@@ -69,6 +70,7 @@ use self::{
 };
 
 use crate::event::{BrowserEvent, EventSystem, BrowserCommand};
+use tokio::sync::{broadcast, oneshot};
 
 pub struct BrowserEngine {
     pub headless: bool,
@@ -87,6 +89,12 @@ pub struct BrowserEngine {
     pub network_monitor: Arc<Mutex<NetworkMonitor>>,
     pub performance_monitor: Arc<Mutex<PerformanceMonitor>>,
     pub console_monitor: Arc<Mutex<ConsoleMonitor>>,
+    /// Pending JavaScript execution requests awaiting a result from the page,
+    /// keyed by request id. Resolved by the IPC handler when the page posts its
+    /// `jsResult` message back. Shared with the API/MCP servers so they can await.
+    pub pending_js: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<String, String>>>>>,
+    /// Monotonic counter for allocating JavaScript execution request ids.
+    pub next_js_id: Arc<AtomicU64>,
 }
 
 impl BrowserEngine {
@@ -118,6 +126,8 @@ impl BrowserEngine {
             network_monitor: Arc::new(Mutex::new(NetworkMonitor::new())),
             performance_monitor: Arc::new(Mutex::new(PerformanceMonitor::new())),
             console_monitor: Arc::new(Mutex::new(ConsoleMonitor::new())),
+            pending_js: Arc::new(Mutex::new(HashMap::new())),
+            next_js_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -162,21 +172,21 @@ impl BrowserEngine {
             }
         }
 
-        // Then update the WebView
+        // Load the URL in the content view.
         if let Some(view) = &self.content_view {
             if let Ok(view) = view.lock() {
-                // Send navigation message to WebView
-                let msg = serde_json::json!({
-                    "type": "navigate",
-                    "url": url
-                });
-                if let Err(e) = view.evaluate_script(&format!("window.ipc.handleMessage('{}')", msg.to_string())) {
-                    error!("Failed to send navigation message to WebView: {}", e);
-                }
-
-                // Load the URL
                 view.load_url(url);
             }
+        }
+
+        // Update the chrome: tab label + address bar.
+        if let Some(ref tab_bar) = self.tab_bar {
+            if let Ok(tabs) = self.tabs.lock() {
+                if let Some(id) = tabs.get_active_tab().map(|t| t.id) {
+                    tab_bar.update_tab_url(id, url);
+                }
+            }
+            tab_bar.update_address_bar(url);
         }
 
         // Finally, emit the navigation event
@@ -200,6 +210,9 @@ impl BrowserEngine {
                     view.load_url(url);
                 }
             }
+            if let Some(ref tab_bar) = self.tab_bar {
+                tab_bar.update_address_bar(url);
+            }
             self.publish_event(BrowserEvent::Navigation { url: url.clone() }).ok();
             info!("Navigating back to: {}", url);
         }
@@ -218,6 +231,9 @@ impl BrowserEngine {
                 if let Ok(view) = view.lock() {
                     view.load_url(url);
                 }
+            }
+            if let Some(ref tab_bar) = self.tab_bar {
+                tab_bar.update_address_bar(url);
             }
             self.publish_event(BrowserEvent::Navigation { url: url.clone() }).ok();
             info!("Navigating forward to: {}", url);
@@ -543,7 +559,7 @@ impl BrowserEngine {
         }
     }
 
-    pub fn run(&mut self) -> Result<(), WebViewError> {
+    pub fn run(&mut self, command_rx: Option<broadcast::Receiver<BrowserCommand>>) -> Result<(), WebViewError> {
         debug!("Starting browser engine");
 
         if self.headless {
@@ -624,8 +640,44 @@ impl BrowserEngine {
         window.request_redraw();
         debug!("Initial redraw requested");
 
+        // Receiver for commands sent by the API/MCP servers. Drained each loop
+        // iteration on the main (UI) thread so WebView calls happen on-thread.
+        let mut command_rx = command_rx;
+
         event_loop.run(move |event, _window_target, control_flow| {
             *control_flow = ControlFlow::Poll;
+
+            // Drain any pending browser commands from the API/MCP servers.
+            if let Some(rx) = command_rx.as_mut() {
+                loop {
+                    match rx.try_recv() {
+                        Ok(cmd) => {
+                            if let Ok(mut browser) = browser.lock() {
+                                if let Err(e) = browser.handle_command(cmd) {
+                                    error!("Error handling browser command: {}", e);
+                                }
+                            }
+                        }
+                        Err(broadcast::error::TryRecvError::Empty) => break,
+                        Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                            warn!("Browser command channel lagged, skipped {} commands", n);
+                        }
+                        Err(broadcast::error::TryRecvError::Closed) => {
+                            command_rx = None;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Drain tab-bar UI commands (mpsc from the TabBar webview's IPC handler).
+            while let Ok(tab_cmd) = cmd_rx.try_recv() {
+                if let Ok(mut browser) = browser.lock() {
+                    if let Err(e) = browser.handle_tab_command(tab_cmd) {
+                        error!("Error handling tab command: {}", e);
+                    }
+                }
+            }
 
             match event {
                 Event::WindowEvent { event, .. } => {
@@ -729,9 +781,10 @@ impl BrowserEngine {
                 .map_err(|_| WebViewError::LockError("Failed to lock tab manager".to_string()))?;
             let id = tabs.create_tab(url.to_string());
 
-            // Update the tab bar
+            // Add the tab to the tab bar UI (title defaults to the URL until a
+            // titleChanged event arrives).
             if let Some(ref tab_bar) = self.tab_bar {
-                tab_bar.update_tab_url(id, url);
+                tab_bar.add_tab(id as u32, url, url);
             }
 
             // Publish tab created event
@@ -794,6 +847,10 @@ impl BrowserEngine {
                 .map_err(|_| WebViewError::LockError("Failed to lock tabs".to_string()))?;
             if !tabs.close_tab(id) {
                 return Err(WebViewError::TabError("Tab not found".to_string()));
+            }
+            // Remove the tab from the tab bar UI
+            if let Some(ref tab_bar) = self.tab_bar {
+                tab_bar.remove_tab(id as u32);
             }
             // Publish tab closed event
             self.publish_event(BrowserEvent::TabClosed { id })
@@ -980,7 +1037,7 @@ impl BrowserEngine {
                 // For now, we'll simulate JavaScript execution since WebView evaluation is async
                 // In a real implementation, this would use WebView's evaluate_script method
                 debug!("Executing JavaScript: {}", script);
-                
+
                 // Mock result for demonstration - in real implementation this would be the actual JS result
                 Ok("{}".to_string())
             } else {
@@ -989,6 +1046,86 @@ impl BrowserEngine {
         } else {
             Err("No content view available".to_string())
         }
+    }
+
+    /// Allocate a fresh JavaScript execution request id.
+    pub fn alloc_js_id(&self) -> u64 {
+        self.next_js_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Evaluate `script` in the active page and arrange for its result to be
+    /// posted back via IPC, tagged with `id`. Non-blocking: the result is
+    /// delivered asynchronously to whoever registered `id` in `pending_js`.
+    ///
+    /// The script is run through `eval`, so its value is the completion value of
+    /// its last expression (matching the convention used by the DOM inspector's
+    /// generated snippets). Must be called on the UI thread (where the WebView
+    /// lives), e.g. from the command pump.
+    pub fn dispatch_js(&self, id: u64, script: &str) {
+        // JSON-encode the user script into a safe JS string literal for eval().
+        let code_literal = serde_json::to_string(script)
+            .unwrap_or_else(|_| "\"\"".to_string());
+
+        let wrapped = format!(
+            r#"(function() {{
+  try {{
+    var __r = eval({code});
+    window.ipc.postMessage(JSON.stringify({{ type: "jsResult", id: {id}, ok: true, result: (__r === undefined ? null : __r) }}));
+  }} catch (e) {{
+    window.ipc.postMessage(JSON.stringify({{ type: "jsResult", id: {id}, ok: false, error: String(e) }}));
+  }}
+}})();"#,
+            code = code_literal,
+            id = id
+        );
+
+        if let Some(view) = &self.content_view {
+            if let Ok(view) = view.lock() {
+                if let Err(e) = view.evaluate_script(&wrapped) {
+                    let msg = format!("evaluate_script failed: {}", e);
+                    error!("{}", msg);
+                    self.resolve_js(id, Err(msg));
+                }
+            } else {
+                self.resolve_js(id, Err("Failed to lock content view".to_string()));
+            }
+        } else {
+            self.resolve_js(id, Err("No content view available".to_string()));
+        }
+    }
+
+    /// Resolve a pending JavaScript request by id, delivering its result to the
+    /// awaiting caller (if still present). No-op if the id is unknown (e.g. the
+    /// caller timed out, or the request was fire-and-forget).
+    pub fn resolve_js(&self, id: u64, result: Result<String, String>) {
+        if let Ok(mut pending) = self.pending_js.lock() {
+            if let Some(tx) = pending.remove(&id) {
+                let _ = tx.send(result);
+            }
+        }
+    }
+
+    /// Convert an incoming selector JSON into an `ElementSelector`. Accepts both
+    /// the public `{type, value}` form (used by the API/MCP) and the native
+    /// `{css|xpath|text}` form the DOM inspector expects.
+    fn parse_element_selector(value: serde_json::Value) -> Result<ElementSelector, String> {
+        if let (Some(kind), Some(val)) = (
+            value.get("type").and_then(|v| v.as_str()),
+            value.get("value").and_then(|v| v.as_str()),
+        ) {
+            let mut sel = ElementSelector {
+                css: None, xpath: None, text: None, attributes: None, index: None,
+            };
+            match kind {
+                "css" => sel.css = Some(val.to_string()),
+                "xpath" => sel.xpath = Some(val.to_string()),
+                "text" => sel.text = Some(val.to_string()),
+                other => return Err(format!("Unknown selector type: {}", other)),
+            }
+            return Ok(sel);
+        }
+        serde_json::from_value::<ElementSelector>(value)
+            .map_err(|e| format!("Invalid selector: {}", e))
     }
 
     /// Find element using various selector strategies
@@ -1349,6 +1486,43 @@ impl BrowserEngine {
         }
     }
 
+    /// Handle a command from the tab bar UI (sent over the mpsc channel by the
+    /// TabBar webview's IPC handler).
+    fn handle_tab_command(&mut self, cmd: TabCommand) -> Result<(), WebViewError> {
+        match cmd {
+            TabCommand::Create { url } => { self.create_tab(&url)?; }
+            TabCommand::Close { id } => { self.close_tab(id)?; }
+            TabCommand::Switch { id } => { self.switch_to_tab(id)?; }
+            TabCommand::UpdateUrl { id, url } => {
+                if let Some(ref tab_bar) = self.tab_bar {
+                    tab_bar.update_tab_url(id, &url);
+                }
+            }
+            TabCommand::UpdateTitle { id, title } => {
+                if let Some(ref tab_bar) = self.tab_bar {
+                    tab_bar.update_tab_title(id, &title);
+                }
+            }
+            TabCommand::Navigate { url } => {
+                self.navigate(&url).map_err(WebViewError::GenericError)?;
+            }
+            TabCommand::Back => {
+                self.go_back().map_err(WebViewError::GenericError)?;
+            }
+            TabCommand::Forward => {
+                self.go_forward().map_err(WebViewError::GenericError)?;
+            }
+            TabCommand::Reload => {
+                let current = self.tabs.lock().ok()
+                    .and_then(|tabs| tabs.get_active_tab().map(|t| t.url.clone()));
+                if let Some(url) = current {
+                    self.navigate(&url).map_err(WebViewError::GenericError)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn handle_command(&mut self, cmd: BrowserCommand) -> Result<(), WebViewError> {
         match cmd {
             BrowserCommand::CreateTab { url } => {
@@ -1419,21 +1593,30 @@ impl BrowserEngine {
                           test_name, result.difference_percentage * 100.0);
                 }
             }
-            BrowserCommand::FindElement { selector } => {
-                if let Ok(element_selector) = serde_json::from_value::<ElementSelector>(selector) {
-                    if let Ok(element) = self.find_element(&element_selector) {
-                        info!("Element found: {:?}", element.is_some());
+            BrowserCommand::FindElement { id, selector } => {
+                match Self::parse_element_selector(selector) {
+                    Ok(element_selector) => {
+                        let script = self.dom_inspector.lock()
+                            .map(|insp| insp.find_element(&element_selector))
+                            .unwrap_or_default();
+                        self.dispatch_js(id, &script);
                     }
+                    Err(e) => self.resolve_js(id, Err(e)),
                 }
             }
-            BrowserCommand::InteractElement { selector, interaction } => {
-                if let (Ok(element_selector), Ok(interaction_type)) = (
-                    serde_json::from_value::<ElementSelector>(selector),
+            BrowserCommand::InteractElement { id, selector, interaction } => {
+                match (
+                    Self::parse_element_selector(selector),
                     serde_json::from_value::<InteractionType>(interaction)
                 ) {
-                    if let Ok(result) = self.interact_with_element(&element_selector, &interaction_type) {
-                        info!("Element interaction successful: {}", result.success);
+                    (Ok(element_selector), Ok(interaction_type)) => {
+                        let script = self.dom_inspector.lock()
+                            .map(|insp| insp.interact_with_element(&element_selector, &interaction_type))
+                            .unwrap_or_default();
+                        self.dispatch_js(id, &script);
                     }
+                    (Err(e), _) => self.resolve_js(id, Err(e)),
+                    (_, Err(e)) => self.resolve_js(id, Err(format!("Invalid interaction: {}", e))),
                 }
             }
             BrowserCommand::HighlightElement { selector, color } => {
@@ -1450,15 +1633,15 @@ impl BrowserEngine {
                     }
                 }
             }
-            BrowserCommand::GetPageInfo => {
-                if let Ok(page_info) = self.get_page_info() {
-                    info!("Page info retrieved: {}", page_info);
-                }
+            BrowserCommand::GetPageInfo { id } => {
+                let script = self.dom_inspector.lock()
+                    .map(|insp| insp.get_page_info())
+                    .unwrap_or_default();
+                self.dispatch_js(id, &script);
             }
-            BrowserCommand::ExecuteJavaScript { script } => {
-                if let Ok(result) = self.execute_javascript(&script) {
-                    info!("JavaScript executed successfully");
-                }
+            BrowserCommand::ExecuteJavaScript { id, script } => {
+                debug!("Dispatching JavaScript execution request {}", id);
+                self.dispatch_js(id, &script);
             }
             BrowserCommand::StartNetworkMonitoring => {
                 if let Ok(mut monitor) = self.network_monitor.lock() {
@@ -1511,10 +1694,11 @@ impl BrowserEngine {
                     info!("Performance monitoring stopped via command");
                 }
             }
-            BrowserCommand::CollectPerformanceMetrics => {
-                if let Ok(metrics) = self.collect_performance_metrics() {
-                    self.publish_event(BrowserEvent::PerformanceMetricsCollected { metrics }).ok();
-                }
+            BrowserCommand::CollectPerformanceMetrics { id } => {
+                let script = self.performance_monitor.lock()
+                    .map(|monitor| monitor.generate_collection_script())
+                    .unwrap_or_default();
+                self.dispatch_js(id, &script);
             }
             BrowserCommand::GetCoreWebVitals => {
                 if let Ok(vitals) = self.get_core_web_vitals() {
@@ -1761,15 +1945,26 @@ impl BrowserEngine {
             }
             Some("titleChanged") => {
                 if let Some(title) = data["title"].as_str() {
-                    // Update tab title
-                    if let Ok(mut tabs) = self.tabs.lock() {
+                    // Update tab title (capture id to update the tab bar after the lock is released)
+                    let active_id = if let Ok(mut tabs) = self.tabs.lock() {
                         if let Some(tab) = tabs.get_active_tab_mut() {
                             tab.title = title.to_string();
+                            let id = tab.id;
                             self.publish_event(BrowserEvent::TabTitleChanged {
-                                id: tab.id,
+                                id,
                                 title: title.to_string(),
                             })?;
+                            Some(id)
+                        } else {
+                            None
                         }
+                    } else {
+                        None
+                    };
+
+                    // Update the visual tab label
+                    if let (Some(id), Some(ref tab_bar)) = (active_id, &self.tab_bar) {
+                        tab_bar.update_tab_title(id, title);
                     }
 
                     // Also publish general title changed event
@@ -1796,6 +1991,16 @@ impl BrowserEngine {
                         url: url.to_string(),
                     })?;
                 }
+            }
+            Some("jsResult") => {
+                let id = data["id"].as_u64().unwrap_or(0);
+                let result = if data["ok"].as_bool().unwrap_or(false) {
+                    // Pass through the JSON representation of the result value.
+                    Ok(data["result"].to_string())
+                } else {
+                    Err(data["error"].as_str().unwrap_or("unknown JavaScript error").to_string())
+                };
+                self.resolve_js(id, result);
             }
             Some(type_) => {
                 error!("Unknown IPC message type: {}", type_);
@@ -1848,10 +2053,12 @@ impl BrowserEngine {
                     }
                 }
 
-                // Update tab bar
+                // Update tab bar and mark the active tab
                 if let Some(ref tab_bar) = self.tab_bar {
                     tab_bar.update_tab_url(active_tab.id, &active_tab.url);
                     tab_bar.update_tab_title(active_tab.id, &active_tab.title);
+                    tab_bar.set_active_tab(active_tab.id as u32);
+                    tab_bar.update_address_bar(&active_tab.url);
                 }
             }
             Ok(())
@@ -1862,11 +2069,11 @@ impl BrowserEngine {
 
     fn create_content_view(&mut self, window: &Window) -> Result<WebView, WebViewError> {
         debug!("Starting content view creation");
-        let tab_height: u32 = 40; // Match the tab bar height
-        
+        let tab_height: u32 = CHROME_HEIGHT; // Below the top chrome (tabs + address bar)
+
         let window_size = window.inner_size();
         debug!("Window size for content view: {:?}", window_size);
-        
+
         let webview_bounds = wry::Rect {
             x: 0,
             y: tab_height as i32,
@@ -1876,13 +2083,29 @@ impl BrowserEngine {
         debug!("Creating WebView with bounds: {:?}", webview_bounds);
 
         debug!("Creating WebView");
-        let builder = WebViewBuilder::new(window)
+
+        // Clone the engine's shared (Arc-based) state so the IPC handler — which
+        // must be 'static — can route messages posted from page JS via
+        // window.ipc.postMessage back into the browser engine.
+        let ipc_engine = self.clone();
+
+        // The content view hosts arbitrary pages under test, so it gets only a
+        // minimal lifecycle-reporting init script (NOT the browser chrome, which
+        // lives in the separate top TabBar webview).
+        // new_as_child so with_bounds positions it below the chrome (bounds are
+        // ignored for webviews created with the plain `new`).
+        let builder = WebViewBuilder::new_as_child(window)
             .with_bounds(webview_bounds)
             .with_visible(true)  // Ensure WebView is visible
             .with_transparent(false)
-            .with_initialization_script(include_str!("../templates/window_chrome.js"))
-            .with_html(include_str!("../templates/window_chrome.html"))?;
-            
+            .with_ipc_handler(move |msg: String| {
+                if let Err(e) = ipc_engine.handle_ipc_message(&msg) {
+                    error!("Failed to handle IPC message: {}", e);
+                }
+            })
+            .with_initialization_script(include_str!("../templates/content_init.js"))
+            .with_html("<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body style=\"margin:0;background:#ffffff;\"></body></html>")?;
+
         debug!("Created WebViewBuilder");
         
         let webview = builder
@@ -1894,7 +2117,7 @@ impl BrowserEngine {
     }
 
     fn update_webview_bounds(&self, window: &Window) {
-        let tab_height: u32 = 40;
+        let tab_height: u32 = CHROME_HEIGHT;
 
         // Update tab bar bounds
         if let Some(ref tab_bar) = self.tab_bar {
@@ -2035,6 +2258,8 @@ impl Clone for BrowserEngine {
             network_monitor: self.network_monitor.clone(),
             performance_monitor: self.performance_monitor.clone(),
             console_monitor: self.console_monitor.clone(),
+            pending_js: self.pending_js.clone(),
+            next_js_id: self.next_js_id.clone(),
         }
     }
 }

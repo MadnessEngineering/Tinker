@@ -107,6 +107,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (None, None)
     };
 
+    // Dedicated receiver for the browser engine's command pump. Subscribing here
+    // (rather than reusing api_command_rx, which is consumed by the event system)
+    // gives the GUI event loop its own view of commands sent by the API/MCP servers.
+    let browser_command_rx = api_command_tx.as_ref().map(|tx| tx.subscribe());
+
     // Initialize event system if broker URL is specified
     let events = if let Some(broker_url) = args.broker_url.as_ref() {
         let mut events = EventSystem::new(broker_url, "tinker-browser");
@@ -213,9 +218,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.api {
             let command_tx_clone = command_tx.clone();
             let event_rx_clone = event_rx.resubscribe();
+            // Share the browser's JS-result registry so API handlers can await
+            // results that the browser engine resolves from page IPC replies.
+            let pending_js = browser.pending_js.clone();
+            let next_js_id = browser.next_js_id.clone();
             info!("🚀 Starting API server on port {}", args.api_port);
             tokio::spawn(async move {
-                if let Err(e) = api::start_api_server(command_tx_clone, event_rx_clone).await {
+                if let Err(e) = api::start_api_server(command_tx_clone, event_rx_clone, pending_js, next_js_id).await {
                     error!("API server error: {}", e);
                 }
             });
@@ -225,12 +234,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.mcp {
             let command_tx_clone = command_tx.clone();
             let event_rx_clone = event_rx.resubscribe();
+            let pending_js = browser.pending_js.clone();
+            let next_js_id = browser.next_js_id.clone();
             info!("🚀 Starting MCP server on stdio");
             info!("📡 MCP server ready for JSON-RPC protocol messages");
 
             // MCP server must run on a separate thread since it blocks on stdin
             std::thread::spawn(move || {
-                let mut mcp_server = mcp::McpServer::new(command_tx_clone, event_rx_clone);
+                let mut mcp_server = mcp::McpServer::new(command_tx_clone, event_rx_clone, pending_js, next_js_id);
                 if let Err(e) = mcp_server.run() {
                     error!("MCP server error: {}", e);
                 }
@@ -246,7 +257,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Browser engine must run on main thread (platform requirement)
     // API server runs in background tokio tasks - this is correct!
-    browser.run()?;
+    browser.run(browser_command_rx)?;
 
     // Reached only in headless mode (GUI event loop never returns).
     // Save session so the next launch can restore tabs.

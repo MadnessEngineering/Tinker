@@ -220,6 +220,7 @@
     perfData.longTasks = collectLongTasks();
     perfData.paintTimings = collectPaintTimings();
 
-    // Return the collected data as JSON
-    return JSON.stringify(perfData);
+    // Return the collected data. The browser's dispatch_js wrapper serializes
+    // the eval result, so return the object directly to avoid double-encoding.
+    return perfData;
 })();

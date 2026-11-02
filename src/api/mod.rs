@@ -13,15 +13,23 @@ use axum::extract::ws::Message;
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
 use tracing::{info, debug, error};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, oneshot};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use crate::event::{BrowserEvent, BrowserCommand};
+
+/// Map of in-flight JavaScript execution requests, keyed by request id and
+/// shared with the browser engine, which resolves them when the page replies.
+pub type JsPending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<String, String>>>>>;
 
 #[derive(Clone)]
 pub struct ApiState {
     command_tx: broadcast::Sender<BrowserCommand>,
     event_rx: Arc<Mutex<broadcast::Receiver<BrowserEvent>>>,
+    pending_js: JsPending,
+    next_js_id: Arc<AtomicU64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -189,10 +197,14 @@ impl<T> ApiResponse<T> {
 pub async fn start_api_server(
     command_tx: broadcast::Sender<BrowserCommand>,
     event_rx: broadcast::Receiver<BrowserEvent>,
+    pending_js: JsPending,
+    next_js_id: Arc<AtomicU64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let state = ApiState {
         command_tx,
         event_rx: Arc::new(Mutex::new(event_rx)),
+        pending_js,
+        next_js_id,
     };
 
     let app = Router::new()
@@ -525,12 +537,7 @@ async fn find_element(
     Json(request): Json<ElementSelectorRequest>,
 ) -> Json<ApiResponse<String>> {
     debug!("API: Find element");
-    
-    let command = BrowserCommand::FindElement { selector: request.selector };
-    match state.command_tx.send(command) {
-        Ok(_) => Json(ApiResponse::success("Element search command sent".to_string())),
-        Err(e) => Json(ApiResponse::error(format!("Failed to send find element command: {}", e))),
-    }
+    await_js_result(&state, |id| BrowserCommand::FindElement { id, selector: request.selector }).await
 }
 
 async fn interact_element(
@@ -538,15 +545,11 @@ async fn interact_element(
     Json(request): Json<InteractionRequest>,
 ) -> Json<ApiResponse<String>> {
     debug!("API: Interact with element");
-    
-    let command = BrowserCommand::InteractElement { 
+    await_js_result(&state, |id| BrowserCommand::InteractElement {
+        id,
         selector: request.selector,
-        interaction: request.interaction 
-    };
-    match state.command_tx.send(command) {
-        Ok(_) => Json(ApiResponse::success("Element interaction command sent".to_string())),
-        Err(e) => Json(ApiResponse::error(format!("Failed to send interaction command: {}", e))),
-    }
+        interaction: request.interaction,
+    }).await
 }
 
 async fn highlight_element(
@@ -582,11 +585,42 @@ async fn get_page_info(
     State(state): State<ApiState>,
 ) -> Json<ApiResponse<String>> {
     debug!("API: Get page info");
-    
-    let command = BrowserCommand::GetPageInfo;
-    match state.command_tx.send(command) {
-        Ok(_) => Json(ApiResponse::success("Page info command sent".to_string())),
-        Err(e) => Json(ApiResponse::error(format!("Failed to send page info command: {}", e))),
+    await_js_result(&state, |id| BrowserCommand::GetPageInfo { id }).await
+}
+
+/// Dispatch a result-bearing browser command and await the JavaScript result it
+/// produces. The command must carry the allocated request id (built via
+/// `make_command`); the browser engine resolves it through the shared
+/// `pending_js` map when the page replies over IPC.
+async fn await_js_result(
+    state: &ApiState,
+    make_command: impl FnOnce(u64) -> BrowserCommand,
+) -> Json<ApiResponse<String>> {
+    // Register the result slot before dispatching, so the reply can never arrive
+    // before we're ready to receive it.
+    let id = state.next_js_id.fetch_add(1, Ordering::Relaxed);
+    let (tx, rx) = oneshot::channel();
+    if let Ok(mut pending) = state.pending_js.lock() {
+        pending.insert(id, tx);
+    }
+
+    if let Err(e) = state.command_tx.send(make_command(id)) {
+        if let Ok(mut pending) = state.pending_js.lock() {
+            pending.remove(&id);
+        }
+        return Json(ApiResponse::error(format!("Failed to send command: {}", e)));
+    }
+
+    match tokio::time::timeout(Duration::from_secs(10), rx).await {
+        Ok(Ok(Ok(result))) => Json(ApiResponse::success(result)),
+        Ok(Ok(Err(js_err))) => Json(ApiResponse::error(format!("JavaScript error: {}", js_err))),
+        Ok(Err(_)) => Json(ApiResponse::error("JavaScript result channel closed".to_string())),
+        Err(_) => {
+            if let Ok(mut pending) = state.pending_js.lock() {
+                pending.remove(&id);
+            }
+            Json(ApiResponse::error("Timed out waiting for JavaScript result".to_string()))
+        }
     }
 }
 
@@ -595,12 +629,7 @@ async fn execute_javascript(
     Json(request): Json<JavaScriptRequest>,
 ) -> Json<ApiResponse<String>> {
     debug!("API: Execute JavaScript");
-    
-    let command = BrowserCommand::ExecuteJavaScript { script: request.script };
-    match state.command_tx.send(command) {
-        Ok(_) => Json(ApiResponse::success("JavaScript execution command sent".to_string())),
-        Err(e) => Json(ApiResponse::error(format!("Failed to send JavaScript command: {}", e))),
-    }
+    await_js_result(&state, |id| BrowserCommand::ExecuteJavaScript { id, script: request.script }).await
 }
 
 async fn start_network_monitoring(
@@ -706,12 +735,7 @@ async fn collect_performance_metrics(
     State(state): State<ApiState>,
 ) -> Json<ApiResponse<String>> {
     debug!("API: Collect performance metrics");
-
-    let command = BrowserCommand::CollectPerformanceMetrics;
-    match state.command_tx.send(command) {
-        Ok(_) => Json(ApiResponse::success("Performance metrics collection command sent".to_string())),
-        Err(e) => Json(ApiResponse::error(format!("Failed to collect performance metrics: {}", e))),
-    }
+    await_js_result(&state, |id| BrowserCommand::CollectPerformanceMetrics { id }).await
 }
 
 async fn get_core_web_vitals(

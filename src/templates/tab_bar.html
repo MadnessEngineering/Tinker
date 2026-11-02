@@ -82,12 +82,54 @@
             background-color: #e0e0e0;
             border-radius: 4px;
         }
+
+        #address-bar {
+            display: flex;
+            align-items: center;
+            height: 36px;
+            padding: 0 6px;
+            background-color: #f0f0f0;
+            border-bottom: 1px solid #ccc;
+        }
+
+        .nav-button {
+            width: 28px;
+            height: 28px;
+            margin: 0 2px;
+            border: none;
+            border-radius: 14px;
+            background-color: transparent;
+            color: #333;
+            font-size: 15px;
+            cursor: pointer;
+        }
+
+        .nav-button:hover { background-color: #e0e0e0; }
+        .nav-button:disabled { opacity: 0.4; cursor: default; }
+
+        #url-input {
+            flex: 1;
+            height: 26px;
+            margin: 0 8px;
+            padding: 0 12px;
+            border: 1px solid #ccc;
+            border-radius: 14px;
+            font-size: 13px;
+            outline: none;
+            background-color: #fff;
+        }
     </style>
 </head>
 <body>
+    <div id="address-bar">
+        <button id="back-button" class="nav-button" title="Back">←</button>
+        <button id="forward-button" class="nav-button" title="Forward">→</button>
+        <button id="reload-button" class="nav-button" title="Reload">↻</button>
+        <input type="text" id="url-input" placeholder="Enter URL or search">
+    </div>
     <div id="tab-bar">
         <button id="new-tab-button">+</button>
     </div>
     <script src="tab_bar.js"></script>
 </body>
-</html> 
+</html>

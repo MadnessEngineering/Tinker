@@ -1,31 +1,11 @@
 window.tabs = new Map();
 
-// IPC setup
-window.ipc = {
-    postMessage: (msg) => window.ipc.external.invoke(JSON.stringify(msg)),
-    handleMessage: (msg) =>
-    {
-        console.log('Message from Rust:', msg);
-        try
-        {
-            const data = JSON.parse(msg);
-            switch (data.type)
-            {
-                case 'updateUrl':
-                    updateTabUrl(data.id, data.url);
-                    break;
-                case 'updateTitle':
-                    updateTabTitle(data.id, data.title);
-                    break;
-                default:
-                    console.warn('Unknown message type:', data.type);
-            }
-        } catch (e)
-        {
-            console.error('Failed to parse message:', e);
-        }
-    }
-};
+// Send a message to Rust. wry injects a frozen window.ipc whose postMessage
+// forwards a single string to the host (read via TryGetWebMessageAsString), so
+// the payload must be stringified here. Do not reassign window.ipc (frozen).
+function send(msg) {
+    window.ipc.postMessage(JSON.stringify(msg));
+}
 
 // Tab management functions
 function createTab(id, url = 'about:blank', title = 'New Tab')
@@ -45,8 +25,8 @@ function createTab(id, url = 'about:blank', title = 'New Tab')
     closeButton.onclick = (e) =>
     {
         e.stopPropagation();
-        window.ipc.postMessage({
-            type: 'close_tab',
+        send({
+            type: 'close',
             id: parseInt(id)
         });
     };
@@ -56,8 +36,8 @@ function createTab(id, url = 'about:blank', title = 'New Tab')
 
     tab.onclick = () =>
     {
-        window.ipc.postMessage({
-            type: 'switch_tab',
+        send({
+            type: 'switch',
             id: parseInt(id)
         });
     };
@@ -67,6 +47,15 @@ function createTab(id, url = 'about:blank', title = 'New Tab')
     window.tabs.set(id, tab);
 
     return tab;
+}
+
+function removeTab(id)
+{
+    const tab = window.tabs.get(id);
+    if (tab) {
+        tab.remove();
+        window.tabs.delete(id);
+    }
 }
 
 function updateTabUrl(id, url)
@@ -101,11 +90,46 @@ function setActiveTab(id) {
     }
 }
 
+// Address-bar helpers (Rust -> page)
+function updateAddressBar(url)
+{
+    const input = document.getElementById('url-input');
+    if (input && document.activeElement !== input) {
+        input.value = url;
+    }
+}
+
+function normalizeUrl(input)
+{
+    let url = input.trim();
+    if (!url) return null;
+    if (!/^https?:\/\//i.test(url)) {
+        if (url.includes('.') && !url.includes(' ')) {
+            url = 'https://' + url;
+        } else {
+            url = 'https://www.google.com/search?q=' + encodeURIComponent(url);
+        }
+    }
+    return url;
+}
+
 // Event listeners
 document.getElementById('new-tab-button').onclick = () =>
 {
-    window.ipc.postMessage({
-        type: 'create_tab',
+    send({
+        type: 'create',
         url: 'about:blank'
     });
 };
+
+document.getElementById('url-input').addEventListener('keypress', (e) =>
+{
+    if (e.key === 'Enter') {
+        const url = normalizeUrl(e.target.value);
+        if (url) send({ type: 'navigate', url: url });
+    }
+});
+
+document.getElementById('back-button').onclick = () => send({ type: 'back' });
+document.getElementById('forward-button').onclick = () => send({ type: 'forward' });
+document.getElementById('reload-button').onclick = () => send({ type: 'reload' });

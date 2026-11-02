@@ -7,10 +7,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
-use tokio::sync::broadcast;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+use tokio::sync::{broadcast, oneshot};
 use tracing::{debug, error, info};
 
 use crate::event::{BrowserCommand, BrowserEvent};
+use crate::api::JsPending;
 
 /// MCP protocol version
 const MCP_VERSION: &str = "2024-11-05";
@@ -48,6 +52,12 @@ struct JsonRpcError {
 pub struct McpServer {
     command_tx: broadcast::Sender<BrowserCommand>,
     event_rx: broadcast::Receiver<BrowserEvent>,
+    /// Shared with the browser engine to await JavaScript results.
+    pending_js: JsPending,
+    next_js_id: Arc<AtomicU64>,
+    /// Current-thread runtime used to block the (synchronous) stdio loop on
+    /// async result channels with a timeout.
+    runtime: tokio::runtime::Runtime,
 }
 
 impl McpServer {
@@ -55,10 +65,63 @@ impl McpServer {
     pub fn new(
         command_tx: broadcast::Sender<BrowserCommand>,
         event_rx: broadcast::Receiver<BrowserEvent>,
+        pending_js: JsPending,
+        next_js_id: Arc<AtomicU64>,
     ) -> Self {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("failed to build MCP runtime");
         Self {
             command_tx,
             event_rx,
+            pending_js,
+            next_js_id,
+            runtime,
+        }
+    }
+
+    /// Dispatch a result-bearing command and block until the browser resolves
+    /// the JavaScript result (or a 10s timeout elapses).
+    fn await_js(&self, make_command: impl FnOnce(u64) -> BrowserCommand) -> Result<String, String> {
+        let id = self.next_js_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        if let Ok(mut pending) = self.pending_js.lock() {
+            pending.insert(id, tx);
+        }
+
+        if let Err(e) = self.command_tx.send(make_command(id)) {
+            if let Ok(mut pending) = self.pending_js.lock() {
+                pending.remove(&id);
+            }
+            return Err(format!("Failed to send command: {}", e));
+        }
+
+        self.runtime.block_on(async {
+            match tokio::time::timeout(Duration::from_secs(10), rx).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err("JavaScript result channel closed".to_string()),
+                Err(_) => {
+                    if let Ok(mut pending) = self.pending_js.lock() {
+                        pending.remove(&id);
+                    }
+                    Err("Timed out waiting for JavaScript result".to_string())
+                }
+            }
+        })
+    }
+
+    /// Wrap a JavaScript result as an MCP tool response.
+    fn js_tool_response(&self, result: Result<String, String>) -> Result<Value, JsonRpcError> {
+        match result {
+            Ok(text) => Ok(json!({
+                "content": [{ "type": "text", "text": text }]
+            })),
+            Err(e) => Err(JsonRpcError {
+                code: -32603,
+                message: e,
+                data: None,
+            }),
         }
     }
 
@@ -466,12 +529,10 @@ impl McpServer {
                     data: None,
                 })?;
 
-                BrowserCommand::FindElement {
-                    selector: json!({
-                        "type": selector_type,
-                        "value": selector
-                    }),
-                }
+                let selector = json!({ "type": selector_type, "value": selector });
+                return self.js_tool_response(
+                    self.await_js(|id| BrowserCommand::FindElement { id, selector })
+                );
             }
             "click_element" => {
                 let selector_type = arguments["selector_type"]
@@ -487,15 +548,11 @@ impl McpServer {
                     data: None,
                 })?;
 
-                BrowserCommand::InteractElement {
-                    selector: json!({
-                        "type": selector_type,
-                        "value": selector
-                    }),
-                    interaction: json!({
-                        "type": "click"
-                    }),
-                }
+                let selector = json!({ "type": selector_type, "value": selector });
+                let interaction = json!({ "type": "click" });
+                return self.js_tool_response(
+                    self.await_js(|id| BrowserCommand::InteractElement { id, selector, interaction })
+                );
             }
             "type_text" => {
                 let selector_type = arguments["selector_type"]
@@ -516,27 +573,26 @@ impl McpServer {
                     data: None,
                 })?;
 
-                BrowserCommand::InteractElement {
-                    selector: json!({
-                        "type": selector_type,
-                        "value": selector
-                    }),
-                    interaction: json!({
-                        "type": "type",
-                        "text": text
-                    }),
-                }
+                let selector = json!({ "type": selector_type, "value": selector });
+                let interaction = json!({ "type": "type", "text": text });
+                return self.js_tool_response(
+                    self.await_js(|id| BrowserCommand::InteractElement { id, selector, interaction })
+                );
             }
-            "get_page_info" => BrowserCommand::GetPageInfo,
+            "get_page_info" => {
+                return self.js_tool_response(
+                    self.await_js(|id| BrowserCommand::GetPageInfo { id })
+                );
+            }
             "execute_javascript" => {
                 let script = arguments["script"].as_str().ok_or_else(|| JsonRpcError {
                     code: -32602,
                     message: "Missing required parameter: script".to_string(),
                     data: None,
-                })?;
-                BrowserCommand::ExecuteJavaScript {
-                    script: script.to_string(),
-                }
+                })?.to_string();
+                return self.js_tool_response(
+                    self.await_js(|id| BrowserCommand::ExecuteJavaScript { id, script })
+                );
             }
             "start_network_monitoring" => BrowserCommand::StartNetworkMonitoring,
             "stop_network_monitoring" => BrowserCommand::StopNetworkMonitoring,
@@ -629,7 +685,29 @@ mod tests {
     fn setup_test_server() -> (McpServer, broadcast::Receiver<BrowserCommand>) {
         let (command_tx, command_rx) = broadcast::channel(100);
         let (_event_tx, event_rx) = broadcast::channel(100);
-        (McpServer::new(command_tx, event_rx), command_rx)
+        let pending_js = Arc::new(Mutex::new(HashMap::new()));
+        let next_js_id = Arc::new(AtomicU64::new(1));
+        (McpServer::new(command_tx, event_rx, pending_js, next_js_id), command_rx)
+    }
+
+    /// Stand in for the browser: resolve any pending JS requests with `value` so
+    /// the blocking `await_js()` in result-bearing tool handlers returns promptly.
+    fn spawn_resolver(server: &McpServer, value: &str) {
+        let pending = server.pending_js.clone();
+        let value = value.to_string();
+        std::thread::spawn(move || {
+            for _ in 0..1000 {
+                if let Ok(mut guard) = pending.lock() {
+                    let ids: Vec<u64> = guard.keys().copied().collect();
+                    for id in ids {
+                        if let Some(tx) = guard.remove(&id) {
+                            let _ = tx.send(Ok(value.clone()));
+                        }
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
     }
 
     #[test]
@@ -750,6 +828,7 @@ mod tests {
     #[test]
     fn test_click_element_tool() {
         let (mut server, _rx) = setup_test_server();
+        spawn_resolver(&server, "{\"success\":true}");
         let params = json!({
             "name": "click_element",
             "arguments": {
@@ -762,12 +841,13 @@ mod tests {
         assert!(result.is_ok());
 
         let response = result.unwrap();
-        assert!(response["content"][0]["text"].as_str().unwrap().contains("click_element"));
+        assert_eq!(response["content"][0]["text"].as_str().unwrap(), "{\"success\":true}");
     }
 
     #[test]
     fn test_type_text_tool() {
         let (mut server, _rx) = setup_test_server();
+        spawn_resolver(&server, "{\"success\":true}");
         let params = json!({
             "name": "type_text",
             "arguments": {
@@ -784,6 +864,7 @@ mod tests {
     #[test]
     fn test_execute_javascript_tool() {
         let (mut server, _rx) = setup_test_server();
+        spawn_resolver(&server, "\"Example Domain\"");
         let params = json!({
             "name": "execute_javascript",
             "arguments": {
@@ -793,6 +874,7 @@ mod tests {
 
         let result = server.handle_tool_call(Some(params));
         assert!(result.is_ok());
+        assert_eq!(result.unwrap()["content"][0]["text"].as_str().unwrap(), "\"Example Domain\"");
     }
 
     #[test]
@@ -1016,6 +1098,7 @@ mod tests {
     #[test]
     fn test_find_element_different_selectors() {
         let (mut server, _rx) = setup_test_server();
+        spawn_resolver(&server, "null");
 
         // CSS selector
         let params = json!({

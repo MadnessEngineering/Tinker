@@ -8,14 +8,19 @@ use anyhow::Result;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElementSelector {
     /// CSS selector
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub css: Option<String>,
     /// XPath selector
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub xpath: Option<String>,
     /// Element text content
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     /// Element attributes to match
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub attributes: Option<HashMap<String, String>>,
     /// Element index if multiple matches
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<usize>,
 }
 
@@ -57,6 +62,7 @@ pub struct ElementBounds {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum InteractionType {
     Click,
     DoubleClick,
@@ -348,11 +354,13 @@ function highlightElement(element, color = '#ff0000', duration = 3000) {
         format!(
             r#"
             {};
+            {};
             const selector = {};
             const element = findElement(selector);
             element ? getElementInfo(element) : null;
             "#,
             self.js_snippets.get("find_element").unwrap(),
+            self.js_snippets.get("get_element_info").unwrap(),
             selector_json
         )
     }
