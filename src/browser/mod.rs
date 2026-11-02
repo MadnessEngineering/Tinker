@@ -594,13 +594,9 @@ impl BrowserEngine {
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<TabCommand>();
         debug!("Created command channel for tab bar");
 
-        // Create content view before tab bar
-        debug!("Creating content view");
-        let webview = self.create_content_view(&window)?;
-        self.content_view = Some(Arc::new(Mutex::new(webview)));
-        debug!("Content view created and stored in Arc<Mutex>");
-
-        // Create tab bar if not in headless mode
+        // Create tab bar BEFORE the content view: the content view's IPC handler
+        // captures a clone of this engine, and that clone must already hold the
+        // tab bar or titleChanged messages can't update the tab labels.
         if !self.headless {
             debug!("Creating tab bar");
             match TabBar::new(&window, cmd_tx) {
@@ -614,6 +610,11 @@ impl BrowserEngine {
                 }
             }
         }
+
+        debug!("Creating content view");
+        let webview = self.create_content_view(&window)?;
+        self.content_view = Some(Arc::new(Mutex::new(webview)));
+        debug!("Content view created and stored in Arc<Mutex>");
 
         // Store window reference
         let window = Arc::new(window);
@@ -1490,7 +1491,10 @@ impl BrowserEngine {
     /// TabBar webview's IPC handler).
     fn handle_tab_command(&mut self, cmd: TabCommand) -> Result<(), WebViewError> {
         match cmd {
-            TabCommand::Create { url } => { self.create_tab(&url)?; }
+            TabCommand::Create { url } => {
+                let id = self.create_tab(&url)?;
+                self.switch_to_tab(id)?;
+            }
             TabCommand::Close { id } => { self.close_tab(id)?; }
             TabCommand::Switch { id } => { self.switch_to_tab(id)?; }
             TabCommand::UpdateUrl { id, url } => {
@@ -1526,7 +1530,9 @@ impl BrowserEngine {
     fn handle_command(&mut self, cmd: BrowserCommand) -> Result<(), WebViewError> {
         match cmd {
             BrowserCommand::CreateTab { url } => {
-                self.create_tab(&url)?;
+                // A user-requested tab becomes the active one, like Ctrl+T.
+                let id = self.create_tab(&url)?;
+                self.switch_to_tab(id)?;
             }
             BrowserCommand::CloseTab { id } => {
                 self.close_tab(id)?;
@@ -1535,19 +1541,8 @@ impl BrowserEngine {
                 self.switch_to_tab(id)?;
             }
             BrowserCommand::Navigate { url } => {
-                if let Ok(tabs) = self.tabs.lock() {
-                    if let Some(active_tab) = tabs.get_active_tab() {
-                        if let Some(view) = &self.content_view {
-                            if let Ok(view) = view.lock() {
-                                view.load_url(&url);
-                            }
-                        }
-                        // Update tab bar
-                        if let Some(ref tab_bar) = self.tab_bar {
-                            tab_bar.update_tab_url(active_tab.id, &url);
-                        }
-                    }
-                }
+                // Same path as the address bar: history, address bar, events.
+                self.navigate(&url).map_err(WebViewError::GenericError)?;
             }
             BrowserCommand::RecordEvent { event } => {
                 if let Ok(mut recorder) = self.recorder.lock() {
@@ -2056,7 +2051,10 @@ impl BrowserEngine {
                 // Update tab bar and mark the active tab
                 if let Some(ref tab_bar) = self.tab_bar {
                     tab_bar.update_tab_url(active_tab.id, &active_tab.url);
-                    tab_bar.update_tab_title(active_tab.id, &active_tab.title);
+                    // Title is empty until the page reports one; keep the URL label.
+                    if !active_tab.title.is_empty() {
+                        tab_bar.update_tab_title(active_tab.id, &active_tab.title);
+                    }
                     tab_bar.set_active_tab(active_tab.id as u32);
                     tab_bar.update_address_bar(&active_tab.url);
                 }
